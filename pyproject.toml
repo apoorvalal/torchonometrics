@@ -1,0 +1,89 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "torchonometrics"
+version = "0.1.0"
+dependencies = [
+  "torch>=2.0.0",
+  "numpy>=1.20.0",
+  "pytorch-minimize",
+]
+requires-python = ">=3.10"
+authors = [
+  {name = "Apoorva Lal", email = "lal.apoorva@gmail.com"},
+]
+description = "GPU-accelerated econometrics in PyTorch."
+readme = "README.md"
+license = "MIT"
+keywords = ["econometrics", "pytorch", "gpu", "machine learning", "statistics", "fixed-effects"]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "License :: OSI Approved :: MIT License",
+  "Operating System :: OS Independent",
+  "Topic :: Scientific/Engineering",
+  "Topic :: Scientific/Engineering :: Mathematics",
+  "Intended Audience :: Science/Research",
+]
+
+[project.urls]
+Homepage = "https://github.com/apoorvalal/torchonometrics"
+Repository = "https://github.com/apoorvalal/torchonometrics"
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=7.0",
+  "pytest-cov",
+  "black",
+  "isort",
+  "mypy",
+  "pre-commit",
+]
+docs = [
+  "sphinx",
+  "sphinx-rtd-theme",
+  "nbsphinx",
+  "jupyter",
+]
+test = [
+  "pytest>=7.0",
+  "pytest-cov",
+  "scikit-learn",  # For comparison tests
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = "test_*.py"
+python_classes = "Test*"
+python_functions = "test_*"
+addopts = [
+    "-v",
+    "--strict-markers",
+    "--disable-warnings",
+    "--tb=short",
+    "--durations=10",
+]
+markers = [
+    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+    "gpu: marks tests that require GPU",
+    "integration: marks tests as integration tests",
+]
+
+[tool.black]
+line-length = 88
+target-version = ['py310']
+
+[tool.isort]
+profile = "black"
+line_length = 88
+
+[tool.mypy]
+python_version = "3.10"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
