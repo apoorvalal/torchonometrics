@@ -21,9 +21,7 @@ class BinaryLogit(ChoiceModel):
             + (1 - y) * torch.nn.functional.logsigmoid(-logits)
         )
 
-    def _compute_fisher_information(
-        self, params: torch.Tensor, X: torch.Tensor, y: torch.Tensor
-    ) -> torch.Tensor:
+    def _compute_fisher_information(self, params: torch.Tensor, X: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
         logits = X @ params
         probs = torch.sigmoid(logits)
         weights = probs * (1 - probs)
@@ -78,14 +76,11 @@ class BinaryProbit(ChoiceModel):
         # Add a small epsilon for numerical stability
         eps = 1e-8
         log_likelihood = torch.sum(
-            y * torch.log(norm_dist.cdf(logits) + eps)
-            + (1 - y) * torch.log(norm_dist.cdf(-logits) + eps)
+            y * torch.log(norm_dist.cdf(logits) + eps) + (1 - y) * torch.log(norm_dist.cdf(-logits) + eps)
         )
         return -log_likelihood
 
-    def _compute_fisher_information(
-        self, params: torch.Tensor, X: torch.Tensor, y: torch.Tensor
-    ) -> torch.Tensor:
+    def _compute_fisher_information(self, params: torch.Tensor, X: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
         logits = X @ params
         norm_dist = torch.distributions.Normal(0, 1)
         pdf_vals = torch.exp(norm_dist.log_prob(logits))
@@ -146,18 +141,14 @@ class MultinomialLogit(ChoiceModel):
         log_probs = torch.nn.functional.log_softmax(logits, dim=1)
         return -torch.sum(y * log_probs)
 
-    def _compute_fisher_information(
-        self, params: torch.Tensor, X: torch.Tensor, y: torch.Tensor
-    ) -> torch.Tensor:
+    def _compute_fisher_information(self, params: torch.Tensor, X: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
         # This is more complex for multinomial logit and will be implemented later.
         return torch.eye(params.shape[0])
 
     def predict_proba(self, X: torch.Tensor) -> torch.Tensor:
         if not self.params or "coef" not in self.params:
             raise ValueError("Model has not been fitted yet.")
-        params_full = torch.cat(
-            [self.params["coef"], torch.zeros(X.shape[1], 1)], dim=1
-        )
+        params_full = torch.cat([self.params["coef"], torch.zeros(X.shape[1], 1)], dim=1)
         logits = X @ params_full
         return torch.nn.functional.softmax(logits, dim=1)
 
@@ -184,79 +175,101 @@ class MultinomialLogit(ChoiceModel):
         }
 
 
-class NestedLogit(ChoiceModel):
+class LowRankLogit(ChoiceModel):
     """
-    Nested Logit model for structural estimation.
+    Low-Rank Logit model for matrix completion style choice problems.
     """
 
-    def __init__(self, nesting_structure: dict, optimizer=None, maxiter=5000, tol=1e-4):
+    def __init__(self, rank: int, n_users: int, n_items: int, optimizer=torch.optim.LBFGS, maxiter=20000, tol=1e-4):
         super().__init__(optimizer, maxiter, tol)
-        self.nesting_structure = nesting_structure
+        self.rank = rank
+        self.n_users = n_users
+        self.n_items = n_items
 
-    def _negative_log_likelihood(
-        self,
-        params: torch.Tensor,
-        X: torch.Tensor,
-        y: torch.Tensor,
-    ) -> float:
-        # This is a simplified placeholder. A full implementation would need to unpack
-        # params into coefficients and lambda values.
-        probs = self.predict_proba(X)
-        return -torch.sum(y * torch.log(probs + 1e-8))
+    def _negative_log_likelihood(self, params: torch.Tensor, X: torch.Tensor, y: torch.Tensor) -> float:
+        # X is expected to be a tensor of user indices
+        # y is expected to be a tensor of chosen item indices
+        user_indices = X.long()
+        item_indices = y.long()
 
-    def _compute_fisher_information(
-        self, params: torch.Tensor, X: torch.Tensor, y: torch.Tensor
-    ) -> torch.Tensor:
-        # Implementation will be complex and will be done in a subsequent step.
-        return torch.eye(params.shape[0])
+        A = params[:self.n_users * self.rank].reshape(self.n_users, self.rank)
+        B = params[self.n_users * self.rank:].reshape(self.n_items, self.rank)
+
+        theta = A @ B.T
+        
+        # For each observation, we need to compute the log-softmax over the choice set.
+        # This is a simplified version assuming the choice set is all items.
+        # A full implementation would need to handle varying choice sets.
+        log_probs = torch.nn.functional.log_softmax(theta, dim=1)
+        nll = -torch.sum(log_probs[user_indices, item_indices])
+
+        return nll
+
+    def fit(self, X: torch.Tensor, y: torch.Tensor, init_params: torch.Tensor = None, verbose: bool = False) -> "LowRankLogit":
+        if init_params is None:
+            A_init = torch.randn(self.n_users, self.rank) * 0.1
+            B_init = torch.randn(self.n_items, self.rank) * 0.1
+            init_params = torch.cat([A_init.flatten(), B_init.flatten()])
+
+        current_params = init_params.clone().requires_grad_(True)
+
+        if self.optimizer_class == torch.optim.LBFGS:
+            optimizer = self.optimizer_class([current_params], max_iter=20)
+        else:
+            optimizer = self.optimizer_class([current_params])
+
+        self.history["loss"] = []
+
+        for i in range(self.maxiter):
+            def closure():
+                optimizer.zero_grad()
+                loss = self._negative_log_likelihood(current_params, X, y)
+                loss.backward()
+                return loss
+
+            if self.optimizer_class == torch.optim.LBFGS:
+                loss_val = optimizer.step(closure)
+            else:
+                loss_val = closure()
+                optimizer.step()
+
+            self.history["loss"].append(loss_val.item())
+
+            if i > 10 and self.tol > 0:
+                loss_change = abs(self.history["loss"][-2] - self.history["loss"][-1]) / (abs(self.history["loss"][-2]) + 1e-8)
+                if loss_change < self.tol:
+                    if verbose:
+                        print(f"Convergence tolerance {self.tol} met at iteration {i}.")
+                    break
+
+        self.params = {"coef": current_params.detach()}
+        self.iterations_run = i + 1
+        self._fitted_X = X.detach()
+        self._fitted_y = y.detach()
+        self._compute_standard_errors()
+
+        # Unpack and store final parameters
+        self.params["A"] = self.params["coef"][:self.n_users * self.rank].reshape(self.n_users, self.rank)
+        self.params["B"] = self.params["coef"][self.n_users * self.rank:].reshape(self.n_items, self.rank)
+        return self
 
     def predict_proba(self, X: torch.Tensor) -> torch.Tensor:
-        if not self.params or "coef" not in self.params or "lambda" not in self.params:
+        if not self.params or "A" not in self.params or "B" not in self.params:
             raise ValueError("Model has not been fitted yet.")
+        
+        theta = self.params["A"] @ self.params["B"].T
+        return torch.nn.functional.softmax(theta, dim=1)
 
-        n_samples = X.shape[0]
-        n_choices = sum(len(v) for v in self.nesting_structure.values())
-        probs = torch.zeros(n_samples, n_choices)
-
-        inclusive_values = {
-            nest: torch.zeros(n_samples) for nest in self.nesting_structure
-        }
-
-        # Calculate inclusive values for each nest
-        for nest, choices in self.nesting_structure.items():
-            for choice in choices:
-                inclusive_values[nest] += torch.exp(
-                    X @ self.params["coef"][:, choice] / self.params["lambda"][nest]
-                )
-
-        # Calculate nest probabilities
-        nest_probs = torch.zeros(n_samples, len(self.nesting_structure))
-        total_inclusive_value = torch.zeros(n_samples)
-        for i, (nest, iv) in enumerate(inclusive_values.items()):
-            total_inclusive_value += torch.pow(iv, self.params["lambda"][nest])
-
-        for i, (nest, iv) in enumerate(inclusive_values.items()):
-            nest_probs[:, i] = (
-                torch.pow(iv, self.params["lambda"][nest]) / total_inclusive_value
-            )
-
-        # Calculate final choice probabilities
-        for i, (nest, choices) in enumerate(self.nesting_structure.items()):
-            for choice in choices:
-                within_nest_prob = (
-                    torch.exp(
-                        X @ self.params["coef"][:, choice] / self.params["lambda"][nest]
-                    )
-                    / inclusive_values[nest]
-                )
-                probs[:, choice] = nest_probs[:, i] * within_nest_prob
-
-        return probs
+    def _compute_fisher_information(self, params: torch.Tensor, X: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
+        # This is a placeholder and should be implemented properly.
+        return torch.eye(params.shape[0])
 
     def simulate(self, X: torch.Tensor) -> torch.Tensor:
-        # Implementation will be complex and will be done in a subsequent step.
-        pass
+        # X is expected to be a tensor of user indices
+        user_indices = X.long()
+        probs = self.predict_proba(user_indices)
+        return torch.multinomial(probs, 1).squeeze(1)
 
     def counterfactual(self, X_new: torch.Tensor) -> dict:
-        # Implementation will be complex and will be done in a subsequent step.
-        pass
+        # This is a placeholder and should be implemented properly.
+        return {}

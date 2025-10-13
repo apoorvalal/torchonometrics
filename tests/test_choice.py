@@ -1,7 +1,7 @@
 import torch
 import numpy as np
 
-from torchonometrics.choice import BinaryLogit, BinaryProbit, MultinomialLogit, NestedLogit
+from torchonometrics.choice import BinaryLogit, BinaryProbit, MultinomialLogit, LowRankLogit
 
 
 def test_binary_logit_smoke():
@@ -96,11 +96,31 @@ def test_multinomial_logit_dgp():
     assert torch.allclose(diff, true_diff, atol=0.3)
 
 
-def test_nested_logit_smoke():
-    # Smoke test for NestedLogit
-    nesting_structure = {
-        'nest1': [0, 1],
-        'nest2': [2, 3]
-    }
-    model = NestedLogit(nesting_structure)
-    assert model is not None
+def test_low_rank_logit_dgp():
+    # Test with a known data generating process for LowRankLogit
+    n_users = 50
+    n_items = 20
+    rank = 3
+    n_samples = n_users * 10
+
+    # Generate true parameters
+    true_A = torch.randn(n_users, rank)
+    true_B = torch.randn(n_items, rank)
+    true_theta = true_A @ true_B.T
+
+    # Generate data
+    user_indices = torch.randint(0, n_users, (n_samples,))
+    
+    # For simplicity, assume all items are in the choice set for each user
+    probs = torch.nn.functional.softmax(true_theta[user_indices], dim=1)
+    item_indices = torch.multinomial(probs, 1).squeeze(1)
+
+    # Fit model
+    model = LowRankLogit(rank, n_users, n_items)
+    model.fit(user_indices, item_indices)
+
+    # Check if the estimated parameters are close to the true parameters
+    # This is a weak test, as the factors A and B are not uniquely identified, and the optimization is non-convex.
+    # We can only check if the product is close.
+    est_theta = model.params["A"] @ model.params["B"].T
+    assert torch.allclose(est_theta, true_theta, atol=2.0) # High tolerance due to non-convexity
