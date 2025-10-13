@@ -5,7 +5,18 @@ from .base import ChoiceModel
 
 class BinaryLogit(ChoiceModel):
     """
-    Binary Logit model for structural estimation.
+    Binary Logit model for discrete choice analysis.
+
+    This model estimates utility-based binary choice using the logistic
+    (sigmoid) link function. Commonly used in structural estimation for
+    modeling binary decisions such as product purchase, participation, etc.
+
+    Examples:
+        >>> model = BinaryLogit()
+        >>> X = torch.randn(100, 3)  # 100 observations, 3 features
+        >>> y = torch.randint(0, 2, (100,))
+        >>> model.fit(X, y)
+        >>> probs = model.predict_proba(X)
     """
 
     def _negative_log_likelihood(
@@ -13,7 +24,18 @@ class BinaryLogit(ChoiceModel):
         params: torch.Tensor,
         X: torch.Tensor,
         y: torch.Tensor,
-    ) -> float:
+    ) -> torch.Tensor:
+        """
+        Compute negative log-likelihood for binary logit model.
+
+        Args:
+            params: Coefficient vector of shape (n_features,).
+            X: Design matrix of shape (n_samples, n_features).
+            y: Binary choice vector of shape (n_samples,).
+
+        Returns:
+            Negative log-likelihood as a scalar tensor.
+        """
         logits = X @ params
         return -torch.sum(
             y * torch.nn.functional.logsigmoid(logits)
@@ -23,6 +45,17 @@ class BinaryLogit(ChoiceModel):
     def _compute_fisher_information(
         self, params: torch.Tensor, X: torch.Tensor, y: torch.Tensor
     ) -> torch.Tensor:
+        """
+        Compute Fisher information matrix for binary logit.
+
+        Args:
+            params: Coefficient vector of shape (n_features,).
+            X: Design matrix of shape (n_samples, n_features).
+            y: Binary choice vector (unused but kept for interface consistency).
+
+        Returns:
+            Fisher information matrix of shape (n_features, n_features).
+        """
         logits = X @ params
         probs = torch.sigmoid(logits)
         weights = probs * (1 - probs)
@@ -30,18 +63,55 @@ class BinaryLogit(ChoiceModel):
         return weighted_X.T @ X
 
     def predict_proba(self, X: torch.Tensor) -> torch.Tensor:
+        """
+        Predict choice probabilities for binary logit model.
+
+        Args:
+            X: Design matrix of shape (n_samples, n_features).
+
+        Returns:
+            Predicted probabilities of choosing option 1, shape (n_samples,).
+
+        Raises:
+            ValueError: If model has not been fitted yet.
+        """
         if not self.params or "coef" not in self.params:
             raise ValueError("Model has not been fitted yet.")
         logits = X @ self.params["coef"]
         return torch.sigmoid(logits)
 
     def simulate(self, X: torch.Tensor) -> torch.Tensor:
+        """
+        Simulate binary choices from the fitted model.
+
+        Args:
+            X: Design matrix of shape (n_samples, n_features).
+
+        Returns:
+            Simulated binary choices of shape (n_samples,).
+        """
         probas = self.predict_proba(X)
         return (torch.rand_like(probas) < probas).to(torch.int32)
 
     def counterfactual(self, X_new: torch.Tensor) -> dict:
         """
-        Computes the change in market share for a counterfactual scenario.
+        Compute change in market share for a counterfactual scenario.
+
+        Compares predicted market share (average choice probability) between
+        the original fitted data and a counterfactual scenario with different
+        covariates.
+
+        Args:
+            X_new: Counterfactual design matrix of shape (n_samples, n_features).
+
+        Returns:
+            Dictionary containing:
+                - market_share_original: Original market share (scalar tensor).
+                - market_share_counterfactual: Counterfactual market share.
+                - change_in_market_share: Difference in market shares.
+
+        Raises:
+            ValueError: If model has not been fitted yet.
         """
         if self._fitted_X is None:
             raise ValueError("Model must be fitted before running counterfactuals.")
@@ -63,7 +133,18 @@ class BinaryLogit(ChoiceModel):
 
 class BinaryProbit(ChoiceModel):
     """
-    Binary Probit model for structural estimation.
+    Binary Probit model for discrete choice analysis.
+
+    This model estimates utility-based binary choice using the normal
+    (probit) link function, assuming normally distributed errors. Often
+    used when the choice depends on a latent continuous variable.
+
+    Examples:
+        >>> model = BinaryProbit()
+        >>> X = torch.randn(100, 3)
+        >>> y = torch.randint(0, 2, (100,))
+        >>> model.fit(X, y)
+        >>> probs = model.predict_proba(X)
     """
 
     def _negative_log_likelihood(
@@ -71,7 +152,21 @@ class BinaryProbit(ChoiceModel):
         params: torch.Tensor,
         X: torch.Tensor,
         y: torch.Tensor,
-    ) -> float:
+    ) -> torch.Tensor:
+        """
+        Compute negative log-likelihood for binary probit model.
+
+        Uses the standard normal CDF (Φ) for link function with numerical
+        stability via epsilon addition.
+
+        Args:
+            params: Coefficient vector of shape (n_features,).
+            X: Design matrix of shape (n_samples, n_features).
+            y: Binary choice vector of shape (n_samples,).
+
+        Returns:
+            Negative log-likelihood as a scalar tensor.
+        """
         logits = X @ params
         norm_dist = torch.distributions.Normal(0, 1)
         # Add a small epsilon for numerical stability
@@ -85,6 +180,17 @@ class BinaryProbit(ChoiceModel):
     def _compute_fisher_information(
         self, params: torch.Tensor, X: torch.Tensor, y: torch.Tensor
     ) -> torch.Tensor:
+        """
+        Compute Fisher information matrix for binary probit.
+
+        Args:
+            params: Coefficient vector of shape (n_features,).
+            X: Design matrix of shape (n_samples, n_features).
+            y: Binary choice vector (unused but kept for interface consistency).
+
+        Returns:
+            Fisher information matrix of shape (n_features, n_features).
+        """
         logits = X @ params
         norm_dist = torch.distributions.Normal(0, 1)
         pdf_vals = torch.exp(norm_dist.log_prob(logits))
@@ -94,6 +200,18 @@ class BinaryProbit(ChoiceModel):
         return weighted_X.T @ X
 
     def predict_proba(self, X: torch.Tensor) -> torch.Tensor:
+        """
+        Predict choice probabilities for binary probit model.
+
+        Args:
+            X: Design matrix of shape (n_samples, n_features).
+
+        Returns:
+            Predicted probabilities of choosing option 1, shape (n_samples,).
+
+        Raises:
+            ValueError: If model has not been fitted yet.
+        """
         if not self.params or "coef" not in self.params:
             raise ValueError("Model has not been fitted yet.")
         logits = X @ self.params["coef"]
@@ -101,12 +219,30 @@ class BinaryProbit(ChoiceModel):
         return norm_dist.cdf(logits)
 
     def simulate(self, X: torch.Tensor) -> torch.Tensor:
+        """
+        Simulate binary choices from the fitted model.
+
+        Args:
+            X: Design matrix of shape (n_samples, n_features).
+
+        Returns:
+            Simulated binary choices of shape (n_samples,).
+        """
         probas = self.predict_proba(X)
         return (torch.rand_like(probas) < probas).to(torch.int32)
 
     def counterfactual(self, X_new: torch.Tensor) -> dict:
         """
-        Computes the change in market share for a counterfactual scenario.
+        Compute change in market share for a counterfactual scenario.
+
+        Args:
+            X_new: Counterfactual design matrix of shape (n_samples, n_features).
+
+        Returns:
+            Dictionary containing market share comparisons.
+
+        Raises:
+            ValueError: If model has not been fitted yet.
         """
         if self._fitted_X is None:
             raise ValueError("Model must be fitted before running counterfactuals.")
@@ -128,7 +264,19 @@ class BinaryProbit(ChoiceModel):
 
 class MultinomialLogit(ChoiceModel):
     """
-    Multinomial Logit model for structural estimation.
+    Multinomial Logit (MNL) model for discrete choice with multiple alternatives.
+
+    This model generalizes binary logit to J > 2 alternatives using the
+    softmax (multinomial logit) link function. One alternative's parameters
+    are normalized to zero for identification.
+
+    Examples:
+        >>> model = MultinomialLogit()
+        >>> X = torch.randn(100, 3)
+        >>> y = torch.zeros(100, 4)  # 4 alternatives
+        >>> y[range(100), torch.randint(0, 4, (100,))] = 1  # One-hot encode
+        >>> model.fit(X, y)
+        >>> probs = model.predict_proba(X)
     """
 
     def _negative_log_likelihood(
@@ -136,7 +284,21 @@ class MultinomialLogit(ChoiceModel):
         params: torch.Tensor,
         X: torch.Tensor,
         y: torch.Tensor,
-    ) -> float:
+    ) -> torch.Tensor:
+        """
+        Compute negative log-likelihood for multinomial logit model.
+
+        Uses cross-entropy loss with one alternative's parameters fixed to
+        zero for identification.
+
+        Args:
+            params: Coefficient matrix of shape (n_features, n_choices - 1).
+            X: Design matrix of shape (n_samples, n_features).
+            y: One-hot encoded choices of shape (n_samples, n_choices).
+
+        Returns:
+            Negative log-likelihood as a scalar tensor.
+        """
         n_choices = y.shape[1]
         # params are shaped (n_features, n_choices - 1)
         # We fix one choice's params to 0 for identification
@@ -148,10 +310,36 @@ class MultinomialLogit(ChoiceModel):
     def _compute_fisher_information(
         self, params: torch.Tensor, X: torch.Tensor, y: torch.Tensor
     ) -> torch.Tensor:
+        """
+        Compute Fisher information matrix for multinomial logit.
+
+        Note: This is a placeholder returning identity matrix. Full implementation
+        requires block-structured Hessian computation across all alternatives.
+
+        Args:
+            params: Coefficient matrix of shape (n_features, n_choices - 1).
+            X: Design matrix of shape (n_samples, n_features).
+            y: One-hot encoded choices (unused but kept for interface consistency).
+
+        Returns:
+            Placeholder identity matrix of shape (n_params, n_params).
+        """
         # This is more complex for multinomial logit and will be implemented later.
         return torch.eye(params.shape[0])
 
     def predict_proba(self, X: torch.Tensor) -> torch.Tensor:
+        """
+        Predict choice probabilities for each alternative.
+
+        Args:
+            X: Design matrix of shape (n_samples, n_features).
+
+        Returns:
+            Predicted probabilities of shape (n_samples, n_choices).
+
+        Raises:
+            ValueError: If model has not been fitted yet.
+        """
         if not self.params or "coef" not in self.params:
             raise ValueError("Model has not been fitted yet.")
         params_full = torch.cat(
@@ -161,10 +349,34 @@ class MultinomialLogit(ChoiceModel):
         return torch.nn.functional.softmax(logits, dim=1)
 
     def simulate(self, X: torch.Tensor) -> torch.Tensor:
+        """
+        Simulate choices from the fitted multinomial logit model.
+
+        Args:
+            X: Design matrix of shape (n_samples, n_features).
+
+        Returns:
+            Simulated choice indices of shape (n_samples,).
+        """
         probs = self.predict_proba(X)
         return torch.multinomial(probs, 1).squeeze(1)
 
     def counterfactual(self, X_new: torch.Tensor) -> dict:
+        """
+        Compute change in market shares across alternatives for counterfactual.
+
+        Args:
+            X_new: Counterfactual design matrix of shape (n_samples, n_features).
+
+        Returns:
+            Dictionary containing:
+                - market_share_original: Market shares per alternative (n_choices,).
+                - market_share_counterfactual: Counterfactual market shares.
+                - change_in_market_share: Difference in market shares.
+
+        Raises:
+            ValueError: If model has not been fitted yet.
+        """
         if self._fitted_X is None:
             raise ValueError("Model must be fitted before running counterfactuals.")
 
@@ -217,19 +429,19 @@ class LowRankLogit(ChoiceModel):
         X: torch.Tensor,
         y: torch.Tensor,
         assortments: torch.Tensor = None,
-    ) -> float:
+    ) -> torch.Tensor:
         """
         Compute negative log-likelihood for observations with varying choice sets.
 
         Args:
-            params: Flattened parameters [A; B] where A is n_users x rank, B is n_items x rank
-            X: User indices (n_obs,)
-            y: Chosen item indices (n_obs,)
+            params: Flattened parameters [A; B] where A is n_users x rank, B is n_items x rank.
+            X: User indices (n_obs,).
+            y: Chosen item indices (n_obs,).
             assortments: Binary mask (n_obs, n_items) indicating available items per observation.
                         If None, assumes all items are available (full choice set).
 
         Returns:
-            Negative log-likelihood
+            Negative log-likelihood as a scalar tensor.
         """
         user_indices = X.long()
         item_indices = y.long()
@@ -375,6 +587,20 @@ class LowRankLogit(ChoiceModel):
     def _compute_fisher_information(
         self, params: torch.Tensor, X: torch.Tensor, y: torch.Tensor
     ) -> torch.Tensor:
+        """
+        Compute Fisher information matrix for low-rank logit model.
+
+        Note: This is a placeholder returning identity matrix. Full implementation
+        requires computation of expected Hessian of the low-rank factorized utility.
+
+        Args:
+            params: Flattened [A; B] parameters.
+            X: User indices (unused but kept for interface consistency).
+            y: Chosen item indices (unused but kept for interface consistency).
+
+        Returns:
+            Placeholder identity matrix of shape (n_params, n_params).
+        """
         # This is a placeholder and should be implemented properly.
         return torch.eye(params.shape[0])
 
