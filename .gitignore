@@ -29,4 +29,7 @@ __pycache__/
 *.out
 *.synctex.gz
 notebooks/scratch.ipynb
+nb/*.py
+ref/*
+torchonometrics/**/*.md
 _info.md

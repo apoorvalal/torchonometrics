@@ -2,7 +2,6 @@
 Integration tests for torchonometrics functionality
 """
 import torch
-import numpy as np
 import pytest
 from torchonometrics.linear import LinearRegression
 from torchonometrics.mle import LogisticRegression, PoissonRegression

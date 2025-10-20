@@ -1,5 +1,5 @@
 from abc import abstractmethod
-from typing import Any, Dict, Optional, Tuple
+from typing import Dict, Optional
 
 import torch
 import numpy as np
@@ -11,6 +11,26 @@ from .base import BaseEstimator
 class MaximumLikelihoodEstimator(BaseEstimator):
     """
     Base class for Maximum Likelihood Estimators using PyTorch optimizers.
+
+    This class provides a flexible framework for fitting statistical models via
+    maximum likelihood estimation. It supports various PyTorch optimizers and
+    automatically computes standard errors using the Fisher information matrix.
+
+    Attributes:
+        optimizer_class: PyTorch optimizer class (default: LBFGS).
+        maxiter: Maximum number of optimization iterations.
+        tol: Convergence tolerance for relative change in loss.
+        params: Dictionary containing fitted parameters and diagnostics.
+        history: Dictionary tracking optimization history (e.g., loss values).
+
+    Examples:
+        >>> class MyModel(MaximumLikelihoodEstimator):
+        ...     def _negative_log_likelihood(self, params, X, y):
+        ...         return torch.sum((y - X @ params) ** 2)  # OLS example
+        ...     def _compute_fisher_information(self, params, X, y):
+        ...         return X.T @ X
+        >>> model = MyModel()
+        >>> model.fit(X, y)
     """
 
     def __init__(
@@ -34,16 +54,18 @@ class MaximumLikelihoodEstimator(BaseEstimator):
         params: torch.Tensor,
         X: torch.Tensor,
         y: torch.Tensor,
-    ) -> float:
+    ) -> torch.Tensor:
         """
         Computes the negative log-likelihood for the model.
         Must be implemented by subclasses.
+
         Args:
-            params: Model parameters.
-            X: Design matrix.
-            y: Target vector.
+            params: Model parameters tensor of shape (n_features,).
+            X: Design matrix of shape (n_samples, n_features).
+            y: Target vector of shape (n_samples,).
+
         Returns:
-            Negative log-likelihood value.
+            Negative log-likelihood as a scalar tensor (maintains gradient information).
         """
         raise NotImplementedError
 
@@ -55,17 +77,30 @@ class MaximumLikelihoodEstimator(BaseEstimator):
         verbose: bool = False,
     ) -> "MaximumLikelihoodEstimator":
         """
-        Fit the model using the specified PyTorch optimizer.
+        Fit the model using maximum likelihood estimation.
+
+        Optimizes the model parameters to minimize the negative log-likelihood
+        using the specified PyTorch optimizer. After convergence, computes
+        standard errors via the Fisher information matrix.
 
         Args:
             X: Design matrix of shape (n_samples, n_features).
-               It's assumed that X includes an intercept column if one is desired.
+               Assumes X includes an intercept column if desired.
             y: Target vector of shape (n_samples,).
-            init_params: Optional initial parameters. If None, defaults to zeros
-                         or small random numbers if a PRNGKey can be obtained.
+            init_params: Initial parameter values of shape (n_features,).
+                        If None, initializes with small random values.
+            verbose: If True, prints convergence information.
 
         Returns:
-            The fitted estimator.
+            Self (fitted estimator) with populated params dictionary containing:
+                - coef: Fitted coefficient vector
+                - se: Standard errors (if Fisher info computation succeeds)
+                - vcov: Variance-covariance matrix
+
+        Examples:
+            >>> model = LogisticRegression()
+            >>> model.fit(X_train, y_train, verbose=True)
+            >>> print(model.params["coef"])
         """
         n_features = X.shape[1]
         if init_params is None:
@@ -129,7 +164,19 @@ class MaximumLikelihoodEstimator(BaseEstimator):
         return self
 
     def _compute_standard_errors(self) -> None:
-        """Compute standard errors using the Fisher information matrix."""
+        """
+        Compute standard errors using the Fisher information matrix.
+
+        Calculates the variance-covariance matrix as the inverse of the Fisher
+        information matrix, then extracts standard errors as the square root
+        of the diagonal elements.
+
+        Updates self.params with:
+            - se: Standard errors (vector)
+            - vcov: Variance-covariance matrix
+
+        If computation fails (e.g., singular Fisher matrix), sets both to None.
+        """
         if self._fitted_X is None or self._fitted_y is None:
             return
             
@@ -152,11 +199,39 @@ class MaximumLikelihoodEstimator(BaseEstimator):
     
     @abstractmethod
     def _compute_fisher_information(self, params: torch.Tensor, X: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
-        """Compute the Fisher information matrix. Must be implemented by subclasses."""
+        """
+        Compute the Fisher information matrix for standard error calculation.
+
+        The Fisher information matrix is the expected value of the Hessian
+        of the negative log-likelihood, and its inverse gives the variance-
+        covariance matrix of the maximum likelihood estimators.
+
+        Args:
+            params: Model parameters of shape (n_features,).
+            X: Design matrix of shape (n_samples, n_features).
+            y: Target vector of shape (n_samples,).
+
+        Returns:
+            Fisher information matrix of shape (n_features, n_features).
+        """
         raise NotImplementedError
     
     def summary(self, alpha: float = 0.05) -> None:
-        """Print a summary of the model results with statistical inference."""
+        """
+        Print a formatted summary of model estimation results.
+
+        Displays a comprehensive table including parameter estimates, standard
+        errors, t-statistics, p-values, and confidence intervals (if standard
+        errors are available).
+
+        Args:
+            alpha: Significance level for confidence intervals (default: 0.05
+                   for 95% confidence intervals).
+
+        Examples:
+            >>> model.fit(X, y)
+            >>> model.summary(alpha=0.01)  # 99% confidence intervals
+        """
         if not self.params or "coef" not in self.params:
             print("Model has not been fitted yet.")
             return
@@ -205,7 +280,21 @@ class MaximumLikelihoodEstimator(BaseEstimator):
 
 class LogisticRegression(MaximumLikelihoodEstimator):
     """
-    Logistic Regression model with proper Fisher information-based standard errors.
+    Logistic Regression for binary classification with MLE estimation.
+
+    Estimates the relationship between a binary outcome and covariates using
+    the logistic (sigmoid) link function. Provides asymptotically efficient
+    maximum likelihood estimates with proper standard errors.
+
+    The model assumes: P(y=1|X) = σ(X'β) where σ is the sigmoid function.
+
+    Examples:
+        >>> model = LogisticRegression(optimizer=torch.optim.LBFGS, maxiter=100)
+        >>> X = torch.randn(1000, 5)  # Add intercept manually if desired
+        >>> y = (torch.randn(1000) > 0).float()
+        >>> model.fit(X, y, verbose=True)
+        >>> model.summary()
+        >>> probs = model.predict_proba(X_test)
     """
 
     def _negative_log_likelihood(
@@ -213,14 +302,21 @@ class LogisticRegression(MaximumLikelihoodEstimator):
         params: torch.Tensor,
         X: torch.Tensor,
         y: torch.Tensor,
-    ) -> float:
+    ) -> torch.Tensor:
         """
         Computes the negative log-likelihood for logistic regression.
+
+        Uses numerically stable log-sigmoid functions to compute:
         NLL = -Σ [y_i * log(p_i) + (1 - y_i) * log(1 - p_i)]
         where p_i = σ(X_i @ β) = 1 / (1 + exp(-X_i @ β))
-        Using numerically stable log_sigmoid:
-        log(p_i) = log_sigmoid(X_i @ β)
-        log(1-p_i) = log_sigmoid(-(X_i @ β))
+
+        Args:
+            params: Coefficient vector of shape (n_features,).
+            X: Design matrix of shape (n_samples, n_features).
+            y: Binary target vector of shape (n_samples,).
+
+        Returns:
+            Negative log-likelihood as a scalar tensor.
         """
         logits = X @ params
         # Use PyTorch's numerically stable functions
@@ -231,10 +327,19 @@ class LogisticRegression(MaximumLikelihoodEstimator):
         return nll
     
     def _compute_fisher_information(self, params: torch.Tensor, X: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
-        """Compute Fisher information matrix for logistic regression.
-        
+        """
+        Compute Fisher information matrix for logistic regression.
+
         For logistic regression, the Fisher information matrix is:
         I(β) = X'WX where W = diag(p_i(1-p_i)) and p_i = σ(X_i'β)
+
+        Args:
+            params: Coefficient vector of shape (n_features,).
+            X: Design matrix of shape (n_samples, n_features).
+            y: Binary target vector (unused but kept for interface consistency).
+
+        Returns:
+            Fisher information matrix of shape (n_features, n_features).
         """
         logits = X @ params
         probs = torch.sigmoid(logits)  # p_i = P(y_i = 1 | x_i)
@@ -248,11 +353,16 @@ class LogisticRegression(MaximumLikelihoodEstimator):
 
     def predict_proba(self, X: torch.Tensor) -> torch.Tensor:
         """
-        Predict probabilities for each class.
+        Predict class probabilities P(y=1|X).
+
         Args:
             X: Design matrix of shape (n_samples, n_features).
+
         Returns:
-            Array of probabilities of shape (n_samples,).
+            Predicted probabilities of shape (n_samples,).
+
+        Raises:
+            ValueError: If model has not been fitted yet.
         """
         if not self.params or "coef" not in self.params:
             raise ValueError("Model has not been fitted yet.")
@@ -262,12 +372,17 @@ class LogisticRegression(MaximumLikelihoodEstimator):
 
     def predict(self, X: torch.Tensor, threshold: float = 0.5) -> torch.Tensor:
         """
-        Predict class labels.
+        Predict binary class labels.
+
         Args:
             X: Design matrix of shape (n_samples, n_features).
-            threshold: Probability threshold for class assignment.
+            threshold: Probability threshold for assigning class 1 (default: 0.5).
+
         Returns:
-            Array of predicted class labels (0 or 1).
+            Predicted class labels of shape (n_samples,) with values in {0, 1}.
+
+        Raises:
+            ValueError: If model has not been fitted yet.
         """
         probas = self.predict_proba(X)
         return (probas >= threshold).to(torch.int32)
@@ -275,7 +390,23 @@ class LogisticRegression(MaximumLikelihoodEstimator):
 
 class PoissonRegression(MaximumLikelihoodEstimator):
     """
-    Poisson Regression model with proper Fisher information-based standard errors.
+    Poisson Regression for count data with MLE estimation.
+
+    Estimates the relationship between count outcomes and covariates using
+    the log link function. Assumes the conditional mean equals the conditional
+    variance: E[y|X] = Var[y|X] = exp(X'β).
+
+    Commonly used for modeling event counts, arrivals, and other non-negative
+    integer outcomes.
+
+    Examples:
+        >>> model = PoissonRegression(maxiter=1000, tol=1e-6)
+        >>> X = torch.randn(500, 4)
+        >>> true_beta = torch.tensor([1.0, -0.5, 0.8, 0.3])
+        >>> y = torch.poisson(torch.exp(X @ true_beta))
+        >>> model.fit(X, y)
+        >>> model.summary()
+        >>> predictions = model.predict(X_test)
     """
 
     def _negative_log_likelihood(
@@ -283,11 +414,21 @@ class PoissonRegression(MaximumLikelihoodEstimator):
         params: torch.Tensor,
         X: torch.Tensor,
         y: torch.Tensor,
-    ) -> float:
+    ) -> torch.Tensor:
         """
         Computes the negative log-likelihood for Poisson regression.
-        The log(y_i!) term is constant w.r.t params, so ignored for optimization.
+
+        The log(y_i!) factorial term is constant with respect to parameters,
+        so it's omitted for optimization. Computes:
         NLL = Σ [exp(X_i @ β) - y_i * (X_i @ β)]
+
+        Args:
+            params: Coefficient vector of shape (n_features,).
+            X: Design matrix of shape (n_samples, n_features).
+            y: Count target vector of shape (n_samples,).
+
+        Returns:
+            Negative log-likelihood as a scalar tensor.
         """
         linear_predictor = X @ params
         lambda_i = torch.exp(linear_predictor)  # Predicted rates
@@ -297,10 +438,19 @@ class PoissonRegression(MaximumLikelihoodEstimator):
         return nll
     
     def _compute_fisher_information(self, params: torch.Tensor, X: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
-        """Compute Fisher information matrix for Poisson regression.
-        
+        """
+        Compute Fisher information matrix for Poisson regression.
+
         For Poisson regression, the Fisher information matrix is:
         I(β) = X'ΛX where Λ = diag(λ_i) and λ_i = exp(X_i'β)
+
+        Args:
+            params: Coefficient vector of shape (n_features,).
+            X: Design matrix of shape (n_samples, n_features).
+            y: Count target vector (unused but kept for interface consistency).
+
+        Returns:
+            Fisher information matrix of shape (n_features, n_features).
         """
         linear_predictor = X @ params
         lambda_i = torch.exp(linear_predictor)  # E[y_i] = Var[y_i] = λ_i
@@ -313,11 +463,16 @@ class PoissonRegression(MaximumLikelihoodEstimator):
 
     def predict(self, X: torch.Tensor) -> torch.Tensor:
         """
-        Predict expected counts (lambda_i).
+        Predict expected counts E[y|X] = exp(X'β).
+
         Args:
             X: Design matrix of shape (n_samples, n_features).
+
         Returns:
-            Array of predicted counts.
+            Predicted expected counts of shape (n_samples,).
+
+        Raises:
+            ValueError: If model has not been fitted yet.
         """
         if not self.params or "coef" not in self.params:
             raise ValueError("Model has not been fitted yet.")
