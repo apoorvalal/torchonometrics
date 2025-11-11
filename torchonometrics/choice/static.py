@@ -470,8 +470,9 @@ class LowRankLogit(ChoiceModel):
         optimizer=torch.optim.LBFGS,
         maxiter=20000,
         tol=1e-4,
+        device=None,
     ):
-        super().__init__(optimizer, maxiter, tol)
+        super().__init__(optimizer, maxiter, tol, device=device)
         self.rank = rank
         self.n_users = n_users
         self.n_items = n_items
@@ -552,10 +553,18 @@ class LowRankLogit(ChoiceModel):
         Returns:
             self
         """
+        # Move data to device
+        X = X.to(self.device)
+        y = y.to(self.device)
+        if assortments is not None:
+            assortments = assortments.to(self.device)
+
         if init_params is None:
-            A_init = torch.randn(self.n_users, self.rank) * 0.1
-            B_init = torch.randn(self.n_items, self.rank) * 0.1
+            A_init = torch.randn(self.n_users, self.rank, device=self.device) * 0.1
+            B_init = torch.randn(self.n_items, self.rank, device=self.device) * 0.1
             init_params = torch.cat([A_init.flatten(), B_init.flatten()])
+        else:
+            init_params = init_params.to(self.device)
 
         current_params = init_params.clone().requires_grad_(True)
 
@@ -628,6 +637,10 @@ class LowRankLogit(ChoiceModel):
         """
         if not self.params or "theta" not in self.params:
             raise ValueError("Model has not been fitted yet.")
+
+        X = X.to(self.device)
+        if assortments is not None:
+            assortments = assortments.to(self.device)
 
         user_indices = X.long()
         utilities = self.params["theta"][user_indices]
@@ -724,6 +737,10 @@ class LowRankLogit(ChoiceModel):
         """
         if not self.params or "theta" not in self.params:
             raise ValueError("Model has not been fitted yet.")
+
+        # Move inputs to device
+        if item_revenues is not None:
+            item_revenues = item_revenues.to(self.device)
 
         # Compute choice probabilities under both scenarios
         baseline_probs = self.predict_proba(user_indices, baseline_assortments)
