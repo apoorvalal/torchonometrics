@@ -33,3 +33,5 @@ nb/*.py
 ref/*
 torchonometrics/**/*.md
 _info.md
+.claude/settings.local.json
+tmp/*

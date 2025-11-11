@@ -1,15 +1,23 @@
-# `torchonometrics`: GPU-accelerated econometrics in PyTorch
+# torchonometrics: GPU-accelerated econometrics in PyTorch
 
-`torchonometrics` provides high-performance implementations of standard econometrics routines using PyTorch, with first-class support for GPU acceleration and modern deep learning workflows.
+High-performance econometric estimation using PyTorch with first-class GPU support and automatic differentiation. Implements method of moments estimators (GMM, GEL), maximum likelihood models, and discrete choice models with modern deep learning workflows.
 
 ## Features
 
-- **Linear Regression** with multiple solver backends (PyTorch, NumPy)
-- **Fixed Effects Regression** with GPU-accelerated alternating projections
-- **Maximum Likelihood Estimation** (Logistic, Poisson) with PyTorch optimizers
-- **GPU Support** - seamless CPU/GPU operation with proper device handling
-- **M-Series Mac Friendly** - no more JAX Metal backend issues
-- **Modern PyTorch Integration** - works naturally with existing PyTorch workflows
+### Core Estimators
+- **Linear Regression**: OLS with fixed effects via GPU-accelerated alternating projections
+- **Generalized Method of Moments (GMM)**: Two-step efficient GMM with HAC-robust inference
+- **Generalized Empirical Likelihood (GEL)**: Empirical likelihood, exponential tilting, and CUE estimators
+- **Maximum Likelihood**: Logistic and Poisson regression with PyTorch optimizers
+- **Discrete Choice Models**: Multinomial logit, probit, and low-rank logit for large choice sets
+
+### Technical Capabilities
+- **Automatic GPU Detection**: Seamless CPU/GPU operation with device management
+- **Heteroskedasticity-Robust Inference**: HC0-HC3 standard errors for cross-sectional data
+- **HAC-Robust Inference**: Newey-West covariance estimation for time series
+- **Custom Optimizers**: Full access to PyTorch optimizer ecosystem (LBFGS, Adam, SGD)
+- **Batched Operations**: Memory-efficient estimation for large datasets
+- **M-Series Mac Support**: Native MPS backend support (no JAX Metal issues)
 
 ## Installation
 
@@ -18,176 +26,236 @@ git clone https://github.com/apoorvalal/torchonometrics
 cd torchonometrics
 uv venv
 source .venv/bin/activate
-pip install -e .
+uv sync
 ```
 
 ## Quick Start
 
-### Linear Regression
+### Linear Regression with Fixed Effects
 
 ```python
 import torch
 from torchonometrics import LinearRegression
 
-# Generate synthetic data
-n, p = 1000, 5
-X = torch.randn(n, p)
-true_coef = torch.randn(p)
-y = X @ true_coef + 0.1 * torch.randn(n)
-
-# Fit model
-model = LinearRegression()
-model.fit(X, y, se="HC1")  # Robust standard errors
-print(f"Coefficients: {model.params['coef']}")
-print(f"Standard Errors: {model.params['se']}")
-
-# Predict
-y_pred = model.predict(X)
-```
-
-### Fixed Effects Regression
-
-```python
-import torch
-from torchonometrics import LinearRegression
-
-# Panel data setup
+# Panel data: firms × years
 n_firms, n_years = 100, 10
 n_obs = n_firms * n_years
 
-# Generate data with firm and year effects
 X = torch.randn(n_obs, 3)
 firm_ids = torch.repeat_interleave(torch.arange(n_firms), n_years)
 year_ids = torch.tile(torch.arange(n_years), (n_firms,))
 
-# Add intercept
-X_with_intercept = torch.cat([torch.ones(n_obs, 1), X], dim=1)
-
-# True coefficients and effects
-true_coef = torch.tensor([2.0, 1.5, -0.8, 0.3])
+# True DGP with fixed effects
+true_coef = torch.tensor([1.5, -0.8, 0.3])
 firm_effects = torch.randn(n_firms)[firm_ids]
 year_effects = torch.randn(n_years)[year_ids]
+y = X @ true_coef + firm_effects + year_effects + 0.1 * torch.randn(n_obs)
 
-y = X_with_intercept @ true_coef + firm_effects + year_effects + 0.1 * torch.randn(n_obs)
-
-# Fit with two-way fixed effects
+# Two-way fixed effects regression
 model = LinearRegression()
-model.fit(X_with_intercept, y, fe=[firm_ids, year_ids])
+model.fit(X, y, fe=[firm_ids, year_ids], se="HC1")
 print(f"Coefficients: {model.params['coef']}")
+print(f"Robust SE: {model.params['se']}")
+```
+
+### Instrumental Variables via GMM
+
+```python
+from torchonometrics.gmm import GMMEstimator
+
+# Define IV moment condition: E[Z'(Y - X'β)] = 0
+def iv_moment(Z, Y, X, beta):
+    return Z * (Y - X @ beta).unsqueeze(-1)
+
+# Two-step efficient GMM
+gmm = GMMEstimator(iv_moment, weighting_matrix="optimal", backend="torch")
+gmm.fit(instruments, outcome, endogenous_vars, two_step=True)
+print(gmm.summary())
 ```
 
 ### Maximum Likelihood Estimation
 
 ```python
-import torch
 from torchonometrics import LogisticRegression
 
-# Binary classification data
-n, p = 500, 4
-X = torch.randn(n, p)
-X_with_intercept = torch.cat([torch.ones(n, 1), X], dim=1)
-
-# Generate binary outcomes
+# Binary response model
+X = torch.randn(1000, 5)
 true_coef = torch.tensor([0.5, 1.0, -0.8, 0.3, 0.2])
-logits = X_with_intercept @ true_coef
-probs = torch.sigmoid(logits)
-y = torch.bernoulli(probs)
+y = torch.bernoulli(torch.sigmoid(X @ true_coef))
 
-# Fit logistic regression
+# MLE with Fisher information-based standard errors
 model = LogisticRegression(maxiter=100)
-model.fit(X_with_intercept, y)
+model.fit(X, y)
+model.summary()  # Displays coefficients, SE, z-stats, p-values
 
 # Predictions
-y_pred_proba = model.predict_proba(X_with_intercept)
-y_pred = model.predict(X_with_intercept)
+probs = model.predict_proba(X)
+classes = model.predict(X, threshold=0.5)
 ```
 
-## 🎛️ GPU Usage
-
-All models automatically detect and use GPU when available:
+### Discrete Choice: Low-Rank Logit
 
 ```python
-# Move data to GPU
-device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-X = X.to(device)
-y = y.to(device)
+from torchonometrics.choice import LowRankLogit
 
-# Models automatically run on GPU
-model = LinearRegression()
-model.fit(X, y)  # Computation happens on GPU
+# Large-scale choice data with varying assortments
+n_users, n_items, rank = 1000, 100, 5
+user_indices = torch.randint(0, n_users, (5000,))
+chosen_items = torch.randint(0, n_items, (5000,))
+assortments = torch.randint(0, 2, (5000, n_items)).float()  # Binary availability
+
+# Factorized utility model: Θ = AB' with zero-sum normalization
+model = LowRankLogit(rank=rank, n_users=n_users, n_items=n_items, lam=0.01)
+model.fit(user_indices, chosen_items, assortments)
+
+# Counterfactual analysis
+baseline = torch.ones(100, n_items)
+baseline[:, 50] = 0  # Product 50 unavailable
+counterfactual = torch.ones(100, n_items)  # All products available
+results = model.counterfactual(user_indices[:100], baseline, counterfactual)
+print(f"Market share change: {results['market_share_change'][50]:.3f}")
 ```
 
-## 🔧 Advanced Features
+## GPU Usage
 
-### Custom Optimizers for MLE
+All estimators automatically detect and use CUDA/MPS when available:
 
 ```python
-from torchonometrics import LogisticRegression
+# Automatic device detection
+model = LinearRegression()  # Uses CUDA if available, else CPU
+model.fit(X, y)
+
+# Explicit device control
+model_cpu = LinearRegression(device='cpu')
+model_gpu = LogisticRegression(device='cuda')
+
+# Move fitted models between devices
+model.fit(X_cpu, y_cpu)
+model.to('cuda')  # Transfer to GPU
+predictions = model.predict(X_gpu)  # Input data auto-moved to model device
+```
+
+## Mathematical Framework
+
+### GMM Estimation
+
+The library implements Hansen's (1982) GMM framework. Given moment conditions $E[g(Z_i, \theta_0)] = 0$, the estimator minimizes:
+
+$$\hat{\theta}_{GMM} = \arg\min_\theta \bar{g}_n(\theta)' W_n \bar{g}_n(\theta)$$
+
+where $W_n$ is the weighting matrix. The efficient two-step procedure uses:
+1. First step: $W_1 = I$ (identity matrix)
+2. Second step: $W_2 = \hat{\Omega}^{-1}$ where $\hat{\Omega} = \frac{1}{n}\sum_i g_i g_i'$
+
+Asymptotic distribution with optimal weighting:
+$$\sqrt{n}(\hat{\theta} - \theta_0) \xrightarrow{d} N(0, (G'\Omega^{-1}G)^{-1})$$
+
+### HAC-Robust Inference
+
+For time series or spatial dependence, the library implements Newey-West (1987) HAC covariance:
+
+$$\hat{\Omega}_{HAC} = \hat{\Gamma}_0 + \sum_{j=1}^L w_j(\hat{\Gamma}_j + \hat{\Gamma}_j')$$
+
+with Bartlett kernel weights $w_j = 1 - j/(L+1)$ and automatic bandwidth selection $L = \lfloor 4(n/100)^{2/9}\rfloor$.
+
+### Fixed Effects
+
+Multi-way fixed effects are eliminated via alternating projections (Gaure, 2013). For two-way effects:
+
+$$\ddot{y}_{it} = \ddot{x}_{it}'\beta + \ddot{\epsilon}_{it}$$
+
+where $\ddot{z}_{it} = z_{it} - \bar{z}_{i\cdot} - \bar{z}_{\cdot t} + \bar{z}_{\cdot\cdot}$ is the within transformation.
+
+### Discrete Choice
+
+The low-rank logit model (Kallus & Udell, 2016) factorizes user-item utilities as $\Theta = AB'$ with rank $r \ll \min(n_{users}, n_{items})$, enabling scalable estimation for large choice sets with varying assortments.
+
+See [mathematical notes](nb/math.pdf) for detailed exposition.
+
+## Advanced Usage
+
+### Custom Optimizers
+
+```python
 import torch.optim as optim
 
-# Use custom optimizer
+# Use Adam instead of default LBFGS
 model = LogisticRegression(
-    optimizer=optim.Adam,  # Instead of default LBFGS
+    optimizer=optim.Adam,
     maxiter=1000
 )
-model.fit(X, y)
 ```
 
-### Solver Options
+### Solver Backends
 
 ```python
-from torchonometrics import LinearRegression
-
-# Different solver backends
-model_torch = LinearRegression(solver="torch")    # PyTorch lstsq (default)
-model_numpy = LinearRegression(solver="numpy")    # NumPy lstsq fallback
+# Linear regression solvers
+model_torch = LinearRegression(solver="torch")  # PyTorch lstsq (GPU-capable)
+model_numpy = LinearRegression(solver="numpy")  # NumPy fallback
 ```
 
-## 📊 Performance
+### Memory-Efficient Batching
 
-`torchonometrics` is designed for performance:
+For datasets exceeding GPU memory, use DataLoader for batched optimization:
 
-- **GPU Acceleration**: Automatic GPU usage for large datasets
-- **Compiled Operations**: Key operations can use `torch.compile` (PyTorch 2.0+)
-- **Memory Efficient**: Optimized memory usage for large fixed effects problems
-- **Batched Operations**: Vectorized computations throughout
+```python
+from torch.utils.data import TensorDataset, DataLoader
 
-## 🧪 Comparison with JAX Implementation
+dataset = TensorDataset(X, y)
+loader = DataLoader(dataset, batch_size=1024, shuffle=True)
 
-`torchonometrics` is a PyTorch port of `jaxonometrics`, designed to address M-series Mac compatibility issues while providing similar performance and APIs. Key differences:
+# Custom training loop with gradient accumulation
+# See notebooks for complete examples
+```
+
+## Performance Characteristics
+
+- **GPU Acceleration**: 10-100× speedup for large datasets (n > 10,000)
+- **Fixed Effects**: Memory-efficient alternating projections scale to millions of observations
+- **Batched Operations**: Vectorized computations throughout, compatible with `torch.compile`
+- **Numerical Stability**: Eigenvalue regularization and pseudo-inverse for ill-conditioned problems
+
+## Comparison with JAX Implementation
+
+torchonometrics is a PyTorch port of jaxonometrics with enhanced device management:
 
 | Feature | jaxonometrics | torchonometrics |
 |---------|---------------|-----------------|
 | Backend | JAX | PyTorch |
-| M-Series Mac | ❌ Metal issues | ✅ Native support |
-| GPU Support | ✅ CUDA/TPU | ✅ CUDA/MPS |
-| API | JAX-style | PyTorch-style |
+| M-Series Mac | Metal issues | Native MPS support |
+| GPU Support | CUDA/TPU | CUDA/MPS/CPU |
+| Auto-diff | `jax.grad` | `torch.autograd` |
 | Compilation | `jax.jit` | `torch.compile` |
-| Ecosystem | JAX/Flax | PyTorch/Lightning |
+| Device Management | Manual | Automatic with `.to()` |
 
-## 🤝 Contributing
+## Contributing
 
-We welcome contributions! Please see our [Contributing Guide](CONTRIBUTING.md) for details.
+Contributions welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
 
-## 📄 License
-
-MIT License. See [LICENSE](LICENSE) for details.
-
-## 🙏 Citation
-
-If you use `torchonometrics` in your research, please cite:
+## Citation
 
 ```bibtex
 @software{torchonometrics,
   title = {torchonometrics: GPU-accelerated econometrics in PyTorch},
   author = {Lal, Apoorva},
-  year = {2024},
-  url = {https://github.com/py-econometrics/torchonometrics}
+  year = {2025},
+  url = {https://github.com/apoorvalal/torchonometrics}
 }
 ```
 
-## 🔗 Related Projects
+## References
 
-- [`jaxonometrics`](https://github.com/py-econometrics/jaxonometrics) - JAX-based econometrics (parent project)
-- [`pyfixest`](https://github.com/py-econometrics/pyfixest) - Fast fixed effects estimation in Python
-- [`linearmodels`](https://github.com/bashtage/linearmodels) - Additional econometric models
+- Hansen, L. P. (1982). Large sample properties of generalized method of moments estimators. *Econometrica*, 50(4), 1029-1054.
+- Newey, W. K., & West, K. D. (1987). A simple, positive semi-definite, heteroskedasticity and autocorrelation consistent covariance matrix. *Econometrica*, 55(3), 703-708.
+- Gaure, S. (2013). OLS with multiple high dimensional category variables. *Computational Statistics & Data Analysis*, 66, 8-18.
+- Kallus, N., & Udell, M. (2016). Dynamic assortment personalization in high dimensions. *arXiv preprint arXiv:1610.05604*.
+
+## Related Projects
+
+- [jaxonometrics](https://github.com/py-econometrics/jaxonometrics) - JAX-based econometrics (parent project)
+- [pyfixest](https://github.com/py-econometrics/pyfixest) - Fast fixed effects estimation
+- [linearmodels](https://github.com/bashtage/linearmodels) - Panel data models
+
+## License
+
+MIT License. See [LICENSE](LICENSE) for details.

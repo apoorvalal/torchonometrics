@@ -51,13 +51,14 @@ class LinearRegression(BaseEstimator):
     >>> model.fit(X, y, fe=[firm_ids])
     """
 
-    def __init__(self, solver="torch"):
+    def __init__(self, solver="torch", device=None):
         """Initialize the LinearRegression model.
 
         Args:
             solver (str, optional): Solver. Defaults to "torch", can also be "numpy".
+            device (torch.device, str, or None): Device to use. Defaults to None (auto-detect).
         """
-        super().__init__()
+        super().__init__(device=device)
         self.solver: str = solver
 
     def fit(
@@ -81,6 +82,11 @@ class LinearRegression(BaseEstimator):
         Returns:
             The fitted estimator.
         """
+        # Move data to device
+        X = X.to(self.device)
+        y = y.to(self.device)
+        if weights is not None:
+            weights = weights.to(self.device)
 
         # Store original data for potential SE calculation
         X_orig, y_orig = X, y
@@ -112,7 +118,7 @@ class LinearRegression(BaseEstimator):
         elif self.solver == "numpy":  # for completeness
             X_np, y_np = X.detach().cpu().numpy(), y.detach().cpu().numpy()
             sol = np.linalg.lstsq(X_np, y_np, rcond=None)
-            self.params = {"coef": torch.from_numpy(sol[0]).to(X.device)}
+            self.params = {"coef": torch.from_numpy(sol[0]).to(self.device)}
 
         if se:
             self._vcov(
@@ -134,6 +140,7 @@ class LinearRegression(BaseEstimator):
         """
         if not isinstance(X, torch.Tensor):
             X = torch.tensor(X)
+        X = X.to(self.device)
         return torch.matmul(X, self.params["coef"])
 
     def _vcov(
