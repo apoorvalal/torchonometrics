@@ -38,8 +38,9 @@ class MaximumLikelihoodEstimator(BaseEstimator):
         optimizer: Optional[torch.optim.Optimizer] = None,
         maxiter: int = 5000,
         tol: float = 1e-4,
+        device: Optional[torch.device] = None,
     ):
-        super().__init__()
+        super().__init__(device=device)
         self.optimizer_class = optimizer if optimizer is not None else torch.optim.LBFGS
         self.maxiter = maxiter
         self.tol = tol
@@ -102,15 +103,19 @@ class MaximumLikelihoodEstimator(BaseEstimator):
             >>> model.fit(X_train, y_train, verbose=True)
             >>> print(model.params["coef"])
         """
+        # Move data to device
+        X = X.to(self.device)
+        y = y.to(self.device)
+
         n_features = X.shape[1]
         if init_params is None:
             # Initialize with small random values for better convergence
             torch.manual_seed(0)  # For reproducibility
             init_params_val = (
-                torch.randn(n_features, device=X.device, dtype=X.dtype) * 0.01
+                torch.randn(n_features, device=self.device, dtype=X.dtype) * 0.01
             )
         else:
-            init_params_val = init_params.to(X.device)
+            init_params_val = init_params.to(self.device)
 
         # Set up parameters for optimization
         current_params = init_params_val.clone().requires_grad_(True)
@@ -161,6 +166,15 @@ class MaximumLikelihoodEstimator(BaseEstimator):
         # Compute standard errors using Fisher information
         self._compute_standard_errors()
         
+        return self
+
+    def to(self, device):
+        """Move model parameters and fitted data to device."""
+        super().to(device)
+        if self._fitted_X is not None:
+            self._fitted_X = self._fitted_X.to(device)
+        if self._fitted_y is not None:
+            self._fitted_y = self._fitted_y.to(device)
         return self
 
     def _compute_standard_errors(self) -> None:
@@ -367,6 +381,7 @@ class LogisticRegression(MaximumLikelihoodEstimator):
         if not self.params or "coef" not in self.params:
             raise ValueError("Model has not been fitted yet.")
 
+        X = X.to(self.device)
         logits = X @ self.params["coef"]
         return torch.sigmoid(logits)
 
@@ -477,5 +492,6 @@ class PoissonRegression(MaximumLikelihoodEstimator):
         if not self.params or "coef" not in self.params:
             raise ValueError("Model has not been fitted yet.")
 
+        X = X.to(self.device)
         linear_predictor = X @ self.params["coef"]
         return torch.exp(linear_predictor)

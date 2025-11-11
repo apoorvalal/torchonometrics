@@ -279,6 +279,49 @@ class MultinomialLogit(ChoiceModel):
         >>> probs = model.predict_proba(X)
     """
 
+    def fit(
+        self,
+        X: torch.Tensor,
+        y: torch.Tensor,
+        init_params: torch.Tensor = None,
+        verbose: bool = False,
+    ) -> "MultinomialLogit":
+        """
+        Fit multinomial logit model with proper param initialization.
+
+        Args:
+            X: Design matrix of shape (n_samples, n_features).
+            y: One-hot encoded choices of shape (n_samples, n_choices).
+            init_params: Initial parameter matrix of shape (n_features, n_choices - 1).
+            verbose: If True, prints convergence information.
+
+        Returns:
+            Fitted model.
+        """
+        n_features = X.shape[1]
+        n_choices = y.shape[1]
+
+        # Reshape init_params for multinomial case
+        if init_params is not None:
+            if init_params.ndim == 1:
+                init_params = init_params.reshape(n_features, n_choices - 1)
+        else:
+            # Initialize as matrix, then flatten for optimizer
+            init_params = torch.randn(
+                n_features, n_choices - 1, device=self.device
+            ) * 0.01
+
+        # Flatten for optimizer
+        init_params_flat = init_params.flatten()
+
+        # Call parent fit with flattened params
+        super().fit(X, y, init_params=init_params_flat, verbose=verbose)
+
+        # Reshape stored params back to matrix form
+        self.params["coef"] = self.params["coef"].reshape(n_features, n_choices - 1)
+
+        return self
+
     def _negative_log_likelihood(
         self,
         params: torch.Tensor,
@@ -292,17 +335,21 @@ class MultinomialLogit(ChoiceModel):
         zero for identification.
 
         Args:
-            params: Coefficient matrix of shape (n_features, n_choices - 1).
+            params: Flattened coefficient vector (reshaped to (n_features, n_choices - 1) internally).
             X: Design matrix of shape (n_samples, n_features).
             y: One-hot encoded choices of shape (n_samples, n_choices).
 
         Returns:
             Negative log-likelihood as a scalar tensor.
         """
+        n_features = X.shape[1]
         n_choices = y.shape[1]
-        # params are shaped (n_features, n_choices - 1)
+        # Reshape flattened params during optimization
+        params = params.reshape(n_features, n_choices - 1)
         # We fix one choice's params to 0 for identification
-        params_full = torch.cat([params, torch.zeros(X.shape[1], 1)], dim=1)
+        params_full = torch.cat(
+            [params, torch.zeros(X.shape[1], 1, device=self.device)], dim=1
+        )
         logits = X @ params_full
         log_probs = torch.nn.functional.log_softmax(logits, dim=1)
         return -torch.sum(y * log_probs)
@@ -325,7 +372,9 @@ class MultinomialLogit(ChoiceModel):
             Placeholder identity matrix of shape (n_params, n_params).
         """
         # This is more complex for multinomial logit and will be implemented later.
-        return torch.eye(params.shape[0])
+        # params is already in matrix form when called from parent
+        n_params = params.numel()
+        return torch.eye(n_params, device=self.device)
 
     def predict_proba(self, X: torch.Tensor) -> torch.Tensor:
         """
@@ -342,8 +391,13 @@ class MultinomialLogit(ChoiceModel):
         """
         if not self.params or "coef" not in self.params:
             raise ValueError("Model has not been fitted yet.")
+        X = X.to(self.device)
         params_full = torch.cat(
-            [self.params["coef"], torch.zeros(X.shape[1], 1)], dim=1
+            [
+                self.params["coef"],
+                torch.zeros(X.shape[1], 1, device=self.device),
+            ],
+            dim=1,
         )
         logits = X @ params_full
         return torch.nn.functional.softmax(logits, dim=1)
@@ -460,7 +514,9 @@ class LowRankLogit(ChoiceModel):
         # Mask unavailable items by setting their utilities to -inf
         if assortments is not None:
             utilities = torch.where(
-                assortments.bool(), utilities, torch.tensor(float("-inf"))
+                assortments.bool(),
+                utilities,
+                torch.tensor(float("-inf"), device=self.device),
             )
 
         # Compute log-softmax over available items
@@ -579,7 +635,9 @@ class LowRankLogit(ChoiceModel):
         # Mask unavailable items
         if assortments is not None:
             utilities = torch.where(
-                assortments.bool(), utilities, torch.tensor(float("-inf"))
+                assortments.bool(),
+                utilities,
+                torch.tensor(float("-inf"), device=self.device),
             )
 
         return torch.nn.functional.softmax(utilities, dim=1)
@@ -602,7 +660,7 @@ class LowRankLogit(ChoiceModel):
             Placeholder identity matrix of shape (n_params, n_params).
         """
         # This is a placeholder and should be implemented properly.
-        return torch.eye(params.shape[0])
+        return torch.eye(params.shape[0], device=self.device)
 
     def simulate(
         self, X: torch.Tensor, assortments: torch.Tensor = None
