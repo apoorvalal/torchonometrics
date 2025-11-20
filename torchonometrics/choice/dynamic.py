@@ -13,7 +13,7 @@ References:
 
 from abc import abstractmethod
 from dataclasses import dataclass
-from typing import Callable, Optional, Literal
+from typing import Callable, Optional, Literal, Union
 
 import torch
 
@@ -103,6 +103,7 @@ class DynamicChoiceModel(ChoiceModel):
         optimizer: type[torch.optim.Optimizer] = torch.optim.LBFGS,
         maxiter: int = 1000,
         tol: float = 1e-6,
+        device: Optional[Union[torch.device, str]] = None,
     ):
         """
         Initialize dynamic choice model.
@@ -115,8 +116,9 @@ class DynamicChoiceModel(ChoiceModel):
             optimizer: PyTorch optimizer class
             maxiter: Maximum iterations for value iteration
             tol: Convergence tolerance
+            device: Device for computations (auto-detects if None)
         """
-        super().__init__(optimizer=optimizer, maxiter=maxiter, tol=tol)
+        super().__init__(optimizer=optimizer, maxiter=maxiter, tol=tol, device=device)
         self.n_states = n_states
         self.n_choices = n_choices
         self.discount_factor = discount_factor
@@ -129,6 +131,13 @@ class DynamicChoiceModel(ChoiceModel):
         # Will be set by set_flow_utility()
         self.utility_fn: Optional[Callable] = None
         self.utility_params: Optional[dict] = None
+
+    def to(self, device: Union[torch.device, str]) -> "DynamicChoiceModel":
+        """Move model and transition matrix to specified device."""
+        super().to(device)
+        if self.transition_matrix is not None:
+            self.transition_matrix = self.transition_matrix.to(self.device)
+        return self
 
     def set_transition_probabilities(
         self,
@@ -157,7 +166,7 @@ class DynamicChoiceModel(ChoiceModel):
         if not torch.allclose(row_sums, torch.ones_like(row_sums), atol=1e-5):
             raise ValueError("Transition probabilities must sum to 1 for each (x,a)")
 
-        self.transition_matrix = transition_matrix
+        self.transition_matrix = transition_matrix.to(self.device)
         self.transition_params = transition_params
 
     def set_flow_utility(
@@ -244,7 +253,7 @@ class DynamicChoiceModel(ChoiceModel):
         References:
             Rust (1987), Equation (3.4): Contraction mapping theorem
         """
-        v_bar = torch.zeros(self.n_states, self.n_choices)
+        v_bar = torch.zeros(self.n_states, self.n_choices, device=self.device)
 
         for iteration in range(max_iter):
             v_bar_new = self._bellman_operator(v_bar, flow_utility)
@@ -395,15 +404,24 @@ class LinearFlowUtility:
     Common specification with state variables entering linearly.
     """
 
-    def __init__(self, n_features: int, n_choices: int):
+    def __init__(
+        self,
+        n_features: int,
+        n_choices: int,
+        device: Optional[Union[torch.device, str]] = None,
+    ):
         """
         Initialize linear utility.
 
         Args:
             n_features: Dimension of state vector
             n_choices: Number of discrete choices
+            device: Device for parameters (auto-detects if None)
         """
-        self.theta = torch.randn(n_features, n_choices) * 0.01
+        if device is None:
+            device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.device = torch.device(device) if isinstance(device, str) else device
+        self.theta = torch.randn(n_features, n_choices, device=self.device) * 0.01
 
     def compute(
         self,
@@ -442,6 +460,7 @@ class ReplacementUtility:
         self,
         theta_maintenance: float = 0.001,
         theta_replacement_cost: float = 10.0,
+        device: Optional[Union[torch.device, str]] = None,
     ):
         """
         Initialize replacement utility parameters.
@@ -449,9 +468,13 @@ class ReplacementUtility:
         Args:
             theta_maintenance: θ_1, cost per unit mileage
             theta_replacement_cost: θ_2, replacement cost (RC)
+            device: Device for parameters (auto-detects if None)
         """
-        self.theta_maintenance = torch.tensor(theta_maintenance)
-        self.theta_replacement_cost = torch.tensor(theta_replacement_cost)
+        if device is None:
+            device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.device = torch.device(device) if isinstance(device, str) else device
+        self.theta_maintenance = torch.tensor(theta_maintenance, device=self.device)
+        self.theta_replacement_cost = torch.tensor(theta_replacement_cost, device=self.device)
 
     def compute(
         self,
@@ -489,5 +512,5 @@ class ReplacementUtility:
 
     def set_params(self, theta_maintenance: float, theta_replacement_cost: float):
         """Update parameter values."""
-        self.theta_maintenance = torch.tensor(theta_maintenance)
-        self.theta_replacement_cost = torch.tensor(theta_replacement_cost)
+        self.theta_maintenance = torch.tensor(theta_maintenance, device=self.device)
+        self.theta_replacement_cost = torch.tensor(theta_replacement_cost, device=self.device)

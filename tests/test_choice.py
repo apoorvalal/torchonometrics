@@ -7,7 +7,7 @@ def test_binary_logit_smoke():
     # Smoke test to ensure the BinaryLogit model can be instantiated and fitted.
     X = torch.randn(100, 2)
     y = (torch.rand(100) < 0.5).to(torch.float32)
-    model = BinaryLogit()
+    model = BinaryLogit(device="cpu")
     model.fit(X, y)
     assert model.params is not None
 
@@ -33,7 +33,7 @@ def test_binary_logit_dgp():
     y = (torch.rand(n_samples) < probs).to(torch.float32)
 
     # Fit model
-    model = BinaryLogit()
+    model = BinaryLogit(device="cpu")
     model.fit(X, y)
 
     # Check if the estimated parameters are close to the true parameters
@@ -56,7 +56,7 @@ def test_binary_probit_dgp():
     y = (torch.rand(n_samples) < probs).to(torch.float32)
 
     # Fit model
-    model = BinaryProbit()
+    model = BinaryProbit(device="cpu")
     model.fit(X, y)
 
     # Check if the estimated parameters are close to the true parameters
@@ -80,7 +80,7 @@ def test_multinomial_logit_dgp():
     y_one_hot = torch.nn.functional.one_hot(y, num_classes=n_choices).to(torch.float32)
 
     # Fit model
-    model = MultinomialLogit()
+    model = MultinomialLogit(device="cpu")
     # We only need to estimate parameters for n_choices - 1
     init_params = torch.randn(n_features + 1, n_choices - 1) * 0.01
     model.fit(X, y_one_hot, init_params=init_params)
@@ -116,7 +116,7 @@ def test_low_rank_logit_dgp():
     item_indices = torch.multinomial(probs, 1).squeeze(1)
 
     # Fit model with small regularization
-    model = LowRankLogit(rank, n_users, n_items, lam=0.01)
+    model = LowRankLogit(rank, n_users, n_items, lam=0.01, device="cpu")
     model.fit(user_indices, item_indices)
 
     # Check model fitted successfully and has expected structure
@@ -163,7 +163,7 @@ def test_low_rank_logit_varying_assortments():
         item_indices[i] = available_items[chosen_idx]
 
     # Fit model with small regularization
-    model = LowRankLogit(rank, n_users, n_items, lam=0.01, maxiter=10000)
+    model = LowRankLogit(rank, n_users, n_items, lam=0.01, maxiter=10000, device="cpu")
     model.fit(user_indices, item_indices, assortments)
 
     # Test prediction on new assortments
@@ -202,7 +202,7 @@ def test_low_rank_logit_counterfactual():
     probs = torch.nn.functional.softmax(true_theta[user_indices], dim=1)
     item_indices = torch.multinomial(probs, 1).squeeze(1)
 
-    model = LowRankLogit(rank, n_users, n_items, lam=0.01)
+    model = LowRankLogit(rank, n_users, n_items, lam=0.01, device="cpu")
     model.fit(user_indices, item_indices, assortments)
 
     # Create counterfactual scenario: remove items 7, 8, 9 from assortment

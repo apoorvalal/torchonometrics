@@ -110,6 +110,7 @@ def test_bellman_operator_simple():
         n_states=n_states,
         n_choices=n_choices,
         discount_factor=discount_factor,
+        device="cpu",
     )
 
     # Simple deterministic transition: always stay in same state
@@ -143,6 +144,7 @@ def test_value_function_convergence():
         n_states=n_states,
         n_choices=n_choices,
         discount_factor=discount_factor,
+        device="cpu",
     )
 
     # Random transition matrix
@@ -171,6 +173,7 @@ def test_value_iteration_properties():
         n_states=n_states,
         n_choices=n_choices,
         discount_factor=discount_factor,
+        device="cpu",
     )
 
     # Create valid transition matrix
@@ -334,7 +337,7 @@ def test_linear_flow_utility():
     n_choices = 2
     n_obs = 100
 
-    utility = LinearFlowUtility(n_features, n_choices)
+    utility = LinearFlowUtility(n_features, n_choices, device="cpu")
 
     # Test computation
     states = torch.randn(n_obs, n_features)
@@ -350,7 +353,7 @@ def test_linear_flow_utility():
 
 def test_replacement_utility():
     """Test Rust (1987) replacement utility."""
-    utility = ReplacementUtility(theta_maintenance=0.001, theta_replacement_cost=10.0)
+    utility = ReplacementUtility(theta_maintenance=0.001, theta_replacement_cost=10.0, device="cpu")
 
     # Test on some mileage values
     mileage = torch.tensor([0.0, 100.0, 200.0])
@@ -509,13 +512,13 @@ def test_full_value_iteration_pipeline():
 
     # Create model
     model = ConcreteDynamicChoiceModel(
-        n_states=n_states, n_choices=n_choices, discount_factor=0.9
+        n_states=n_states, n_choices=n_choices, discount_factor=0.9, device="cpu"
     )
     model.set_transition_probabilities(P_hat)
 
     # Solve value functions
     flow_utility = torch.randn(n_states, n_choices)
-    v_bar = model.solve_value_functions(flow_utility)
+    v_bar = model.solve_value_functions(flow_utility, tol=1e-7)
 
     # Compute choice probabilities
     test_states = torch.arange(n_states)
