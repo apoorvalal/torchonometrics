@@ -37,3 +37,4 @@ _info.md
 tmp/*
 .beads/*
 *.html
+uv.lock
