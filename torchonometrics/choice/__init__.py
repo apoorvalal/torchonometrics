@@ -4,6 +4,7 @@ from .dynamic import (
     DynamicChoiceData,
     LinearFlowUtility,
     ReplacementUtility,
+    RustNFP, # Added RustNFP
 )
 from .transitions import (
     estimate_transition_matrix,
@@ -22,6 +23,7 @@ __all__ = [
     "DynamicChoiceData",
     "LinearFlowUtility",
     "ReplacementUtility",
+    "RustNFP", # Added RustNFP
     # Transition utilities
     "estimate_transition_matrix",
     "discretize_state",

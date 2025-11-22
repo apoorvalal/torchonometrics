@@ -335,40 +335,42 @@ def test_linear_flow_utility():
     """Test linear utility specification."""
     n_features = 3
     n_choices = 2
-    n_obs = 100
-
-    utility = LinearFlowUtility(n_features, n_choices, device="cpu")
-
-    # Test computation
-    states = torch.randn(n_obs, n_features)
-    utilities = utility.compute(states)
-
+    n_obs = 5
+    
+    utility = LinearFlowUtility(n_features=n_features, n_choices=n_choices)
+    states = torch.randn(n_obs, n_features, device=utility.device, dtype=torch.float64)
+    
+    # Test all choices
+    utilities = utility.forward(states)
     assert utilities.shape == (n_obs, n_choices)
-
-    # Test single choice
-    utility_0 = utility.compute(states, choice=0)
-    assert utility_0.shape == (n_obs,)
-    assert torch.allclose(utility_0, utilities[:, 0])
+    
+    # Test specific choice
+    u0 = utility.forward(states, choice=0)
+    assert u0.shape == (n_obs,)
+    assert torch.allclose(u0, utilities[:, 0])
 
 
 def test_replacement_utility():
-    """Test Rust (1987) replacement utility."""
-    utility = ReplacementUtility(theta_maintenance=0.001, theta_replacement_cost=10.0, device="cpu")
-
-    # Test on some mileage values
-    mileage = torch.tensor([0.0, 100.0, 200.0])
-
-    # Maintain utility should decrease with mileage
-    maintain = utility.compute(mileage, choice=0)
-    assert maintain[0] > maintain[1] > maintain[2]
-
-    # Replace utility should be constant (doesn't depend on mileage)
-    replace = utility.compute(mileage, choice=1)
-    assert torch.allclose(replace, replace[0] * torch.ones_like(replace))
-
-    # Test getting both
-    both = utility.compute(mileage)
-    assert both.shape == (3, 2)
+    """Test Rust replacement utility."""
+    utility = ReplacementUtility(
+        theta_maintenance=0.1,
+        theta_replacement_cost=5.0
+    )
+    mileage = torch.arange(5, dtype=torch.float32, device=utility.device)
+    
+    # Test maintain
+    maintain = utility.forward(mileage, choice=0)
+    expected_maintain = -0.1 * mileage
+    assert torch.allclose(maintain, expected_maintain)
+    
+    # Test replace
+    replace = utility.forward(mileage, choice=1)
+    expected_replace = torch.full_like(mileage, -5.0)
+    assert torch.allclose(replace, expected_replace)
+    
+    # Test both
+    both = utility.forward(mileage)
+    assert both.shape == (5, 2)
     assert torch.allclose(both[:, 0], maintain)
     assert torch.allclose(both[:, 1], replace)
 
