@@ -112,13 +112,30 @@ class LinearRegression(BaseEstimator):
             # Use demeaned data for regression
             X, y = X_demeaned, y_demeaned
 
+            # Drop near-zero columns (absorbed by FE, e.g., intercept)
+            col_norms = torch.norm(X, dim=0)
+            non_zero_cols = col_norms > 1e-8
+            if not torch.all(non_zero_cols):
+                self._dropped_cols = ~non_zero_cols
+                X = X[:, non_zero_cols]
+            else:
+                self._dropped_cols = None
+
         if self.solver == "torch":
             sol = torch.linalg.lstsq(X, y)
-            self.params = {"coef": sol.solution}
+            coef = sol.solution
         elif self.solver == "numpy":  # for completeness
             X_np, y_np = X.detach().cpu().numpy(), y.detach().cpu().numpy()
             sol = np.linalg.lstsq(X_np, y_np, rcond=None)
-            self.params = {"coef": torch.from_numpy(sol[0]).to(self.device)}
+            coef = torch.from_numpy(sol[0]).to(self.device)
+
+        # Restore zeros for dropped columns (absorbed by FE)
+        if fe is not None and hasattr(self, '_dropped_cols') and self._dropped_cols is not None:
+            full_coef = torch.zeros(X_orig.shape[1], dtype=coef.dtype, device=self.device)
+            full_coef[~self._dropped_cols] = coef
+            coef = full_coef
+
+        self.params = {"coef": coef}
 
         if se:
             self._vcov(

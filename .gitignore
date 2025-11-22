@@ -35,3 +35,6 @@ torchonometrics/**/*.md
 _info.md
 .claude/settings.local.json
 tmp/*
+.beads/*
+*.html
+uv.lock
