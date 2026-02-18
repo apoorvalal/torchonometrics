@@ -21,10 +21,14 @@ jobs:
         with:
           python-version: "3.12"
       - uses: astral-sh/setup-uv@v4
-      - name: Install dependencies
-        run: uv sync --extra docs
       - name: Build docs
-        run: bash docs/build_api_docs.sh
+        run: >
+          uv run
+          --with pdoc
+          --with numpy
+          --with pandas
+          --with scipy
+          python docs/generate_api_docs.py docs/api
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3
         with:
