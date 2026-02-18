@@ -1,3 +1,11 @@
+"""
+Linear regression estimators with fixed-effects support.
+
+This module contains `LinearRegression`, a PyTorch-native OLS estimator that
+supports weighted fitting, multi-way fixed-effects demeaning, and robust
+variance estimators.
+"""
+
 from typing import Optional, Union, List
 
 import numpy as np

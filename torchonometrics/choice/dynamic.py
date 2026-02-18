@@ -415,6 +415,36 @@ class DynamicChoiceModel(ChoiceModel):
 
         return theta_dict, phi
 
+    def _get_coef_params(self) -> torch.Tensor:
+        """
+        Return fitted coefficient parameters in tensor form.
+
+        Supports both the canonical internal representation
+        (``self.params == {"coef": tensor}``) and a legacy direct tensor assignment
+        (``self.params == tensor``), which appears in older tests/examples.
+        """
+        if self.params is None:
+            raise ValueError("Model must be fitted before accessing parameters")
+
+        if isinstance(self.params, dict):
+            if "coef" not in self.params:
+                raise ValueError("Fitted parameters are missing the 'coef' entry")
+            coef = self.params["coef"]
+        elif isinstance(self.params, torch.Tensor):
+            coef = self.params
+        else:
+            raise TypeError(
+                "Expected fitted parameters to be a dict with key 'coef' "
+                f"or a torch.Tensor, got {type(self.params).__name__}"
+            )
+
+        if not isinstance(coef, torch.Tensor):
+            raise TypeError(
+                f"Expected coefficient parameters to be a torch.Tensor, got {type(coef).__name__}"
+            )
+
+        return coef.to(self.device)
+
     @abstractmethod
     def _negative_log_likelihood(
         self,
@@ -530,7 +560,7 @@ class RustNFP(DynamicChoiceModel):
         if self.params is None:
             raise ValueError("Model must be fitted before prediction")
 
-        theta_dict, _ = self._unpack_params(self.params["coef"])
+        theta_dict, _ = self._unpack_params(self._get_coef_params())
 
         if isinstance(self.utility_fn, ReplacementUtility):
             flow_utility = self.utility_fn.forward(
@@ -565,7 +595,7 @@ class RustNFP(DynamicChoiceModel):
                 "Model must be fitted and transition matrix set before simulation"
             )
 
-        theta_dict, _ = self._unpack_params(self.params["coef"])
+        theta_dict, _ = self._unpack_params(self._get_coef_params())
 
         if isinstance(self.utility_fn, ReplacementUtility):
             flow_utility = self.utility_fn.forward(
@@ -631,7 +661,6 @@ class RustNFP(DynamicChoiceModel):
         # but here it's specific. Keeping as is for now.
         # ... (omitted full replication of logic for brevity, assuming it's same as before)
         # Re-using previous implementation logic:
-        original_params = self.params["coef"].clone().detach()
 
         if isinstance(self.utility_fn, ReplacementUtility):
             original_maintenance_param = self.utility_fn.theta_maintenance.data.clone()
@@ -868,12 +897,30 @@ class HotzMillerCCP(DynamicChoiceModel):
 
 # Utility Specifications
 class LinearFlowUtility(nn.Module):
+    """
+    Linear-in-features flow utility specification.
+
+    The model parameterizes period utility as:
+
+        u(x, a) = f(x)^T theta[:, a]
+
+    where `f(x)` is a feature vector for state `x`.
+    """
+
     def __init__(
         self,
         n_features: int,
         n_choices: int,
         device: Optional[Union[torch.device, str]] = None,
     ):
+        """
+        Initialize linear utility coefficients.
+
+        Args:
+            n_features: Number of features in state representation.
+            n_choices: Number of discrete actions.
+            device: Torch device for parameter storage.
+        """
         super().__init__()
         if device is None:
             device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -889,6 +936,18 @@ class LinearFlowUtility(nn.Module):
         choice: Optional[int] = None,
         theta: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
+        """
+        Evaluate flow utility for states and actions.
+
+        Args:
+            states: State feature matrix of shape `(n_obs, n_features)`.
+            choice: If provided, returns utility for a single action index.
+            theta: Optional coefficient override, used during optimization.
+
+        Returns:
+            Utility tensor of shape `(n_obs,)` for single-choice mode or
+            `(n_obs, n_choices)` when `choice is None`.
+        """
         _theta = theta if theta is not None else self.theta
         if choice is not None:
             return states @ _theta[:, choice]
@@ -897,12 +956,29 @@ class LinearFlowUtility(nn.Module):
 
 
 class ReplacementUtility(nn.Module):
+    """
+    Rust-style bus replacement flow utility.
+
+    Two-action specification:
+
+    - `a=0` (maintain): `u(x,0) = -theta_maintenance * x`
+    - `a=1` (replace): `u(x,1) = -theta_replacement_cost`
+    """
+
     def __init__(
         self,
         theta_maintenance: float = 0.001,
         theta_replacement_cost: float = 10.0,
         device: Optional[Union[torch.device, str]] = None,
     ):
+        """
+        Initialize replacement utility parameters.
+
+        Args:
+            theta_maintenance: Marginal maintenance cost per state unit.
+            theta_replacement_cost: Fixed utility cost of replacement.
+            device: Torch device for parameter storage.
+        """
         super().__init__()
         if device is None:
             device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -923,6 +999,18 @@ class ReplacementUtility(nn.Module):
         theta_maintenance: Optional[torch.Tensor] = None,
         theta_replacement_cost: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
+        """
+        Evaluate replacement-model flow utility.
+
+        Args:
+            state: Discrete state index tensor.
+            choice: Optional action index (`0` maintain, `1` replace).
+            theta_maintenance: Optional maintenance parameter override.
+            theta_replacement_cost: Optional replacement-cost override.
+
+        Returns:
+            Utility tensor for requested action or stacked `(n_obs, 2)` utility.
+        """
         _theta_maintenance = (
             theta_maintenance
             if theta_maintenance is not None
@@ -943,12 +1031,14 @@ class ReplacementUtility(nn.Module):
             return torch.stack([maintain_utility, replace_utility], dim=1)
 
     def get_params(self) -> dict:
+        """Return scalar utility parameters as a Python dictionary."""
         return {
             "theta_maintenance": self.theta_maintenance.item(),
             "theta_replacement_cost": self.theta_replacement_cost.item(),
         }
 
     def set_params(self, theta_maintenance, theta_replacement_cost):
+        """Set utility parameters from Python scalars or tensors."""
         if isinstance(theta_maintenance, torch.Tensor):
             self.theta_maintenance.data = theta_maintenance.to(self.device).to(
                 torch.float64

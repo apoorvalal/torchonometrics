@@ -1,3 +1,11 @@
+"""
+Generalized Method of Moments (GMM) estimators.
+
+This module provides a backend-dispatching `GMMEstimator` API and concrete
+SciPy and PyTorch implementations for two-step and continuously updated
+moment-based estimation.
+"""
+
 from abc import ABC, abstractmethod
 from typing import Callable, Optional, Union
 

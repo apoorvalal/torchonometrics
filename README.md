@@ -29,6 +29,17 @@ source .venv/bin/activate
 uv sync
 ```
 
+## API Documentation
+
+Generate API docs from docstrings with `pdoc`:
+
+```bash
+uv sync --extra docs
+bash docs/build_api_docs.sh
+```
+
+The rendered site is written to `docs/api/` by default.
+
 ## Quick Start
 
 ### Linear Regression with Fixed Effects

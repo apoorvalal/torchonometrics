@@ -45,6 +45,9 @@ dev = [
   "pre-commit",
 ]
 docs = [
+  "pdoc>=15.0.0",
+  "pandas>=2.0.0",
+  "scipy>=1.10.0",
   "sphinx",
   "sphinx-rtd-theme",
   "nbsphinx",

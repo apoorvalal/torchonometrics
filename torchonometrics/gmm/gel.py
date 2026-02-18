@@ -1,3 +1,10 @@
+"""
+Generalized empirical likelihood (GEL) estimators.
+
+Implements empirical likelihood (EL), exponential tilting (ET), and CUE-style
+objectives with asymptotic covariance and overidentification testing.
+"""
+
 import numpy as np
 from scipy.optimize import minimize
 from typing import Callable, Optional
@@ -28,7 +35,21 @@ def rho_el(v: np.ndarray) -> np.ndarray:
 
 class GELEstimator:
     """
-    Class for Generalized empirical likelihood estimation for vector-valued problems.
+    Generalized empirical likelihood estimator for vector-valued moments.
+
+    Parameters
+    ----------
+    m : Callable[[np.ndarray, np.ndarray], np.ndarray]
+        Moment function returning an `(n_obs, n_moments)` array for data and
+        parameter vector.
+    rho : Callable[[np.ndarray], np.ndarray], default=rho_exponential
+        GEL tilt function defining the criterion (ET, EL, or CUE).
+    min_method : str, default="L-BFGS-B"
+        Optimization method used for both inner and outer problems.
+    verbose : bool, default=False
+        If True, enables optimizer display output.
+    log : bool, default=False
+        If True, sets logger level to INFO.
     """
 
     def __init__(

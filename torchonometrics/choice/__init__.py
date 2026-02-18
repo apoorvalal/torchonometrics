@@ -1,3 +1,10 @@
+"""
+Discrete choice estimators and utilities.
+
+This subpackage provides static and dynamic discrete choice models, transition
+estimators, and CCP tools used in structural estimation workflows.
+"""
+
 from .static import BinaryLogit, BinaryProbit, MultinomialLogit, LowRankLogit
 from .dynamic import (
     DynamicChoiceModel,
