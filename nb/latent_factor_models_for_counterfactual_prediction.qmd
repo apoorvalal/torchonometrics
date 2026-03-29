@@ -1,0 +1,530 @@
+---
+title: "Latent Factor Models for Counterfactual Prediction"
+author: "Codex"
+date: "2026-03-28"
+format:
+  html:
+    embed-resources: true
+    page-layout: full
+    code-fold: true
+    toc: true
+    toc-depth: 3
+    number-sections: true
+execute:
+  echo: true
+  warning: false
+  message: false
+---
+
+## Executive Summary
+
+This note reviews latent-factor models for counterfactual prediction in panels
+and panel-like matrices, and turns that review into a concrete problem
+specification for `torchonometrics`.
+
+The key point is that grouped fixed effects, interactive fixed effects, matrix
+completion, and generalized low-rank GLMs are all variations on the same latent
+index template:
+
+$$
+\eta_{it} = x_{it}'\beta + m_{it},
+$$
+
+where $m_{it}$ is a latent outcome surface.
+
+Different methods correspond to different restrictions on $m_{it}$:
+
+- additive FE: $m_{it} = \alpha_i + \lambda_t$;
+- grouped FE: $m_{it} = a_{g(i),t}$;
+- interactive FE: $m_{it} = a_i^\top b_t$;
+- generalized matrix completion: $\mathbb E[Y_{it}\mid X] = g^{-1}(x_{it}'\beta + a_i^\top b_t)$.
+
+Grouped FE is therefore a special case of low-rank modeling: it constrains the
+row factors to be one-hot. Matrix completion is the continuous-factor analogue.
+
+The implementation conclusion is straightforward:
+
+> `torchonometrics` should eventually support a generic family of latent-factor
+> GLM estimators of the form
+> $g^{-1}(x_{it}'\beta + a_i^\top b_t)$,
+> with grouped FE as an optional specialization.
+
+PyTorch is a particularly good substrate for this because the practical solver
+is almost always a factorized nonconvex program, and that is exactly the kind
+of problem where GPU-backed autodiff and custom losses are useful.
+
+## Motivation
+
+Counterfactual prediction in panel data is fundamentally a missing-data problem.
+We observe a subset of untreated outcomes and want to recover the latent
+untreated surface on missing or treated cells.
+
+Examples include:
+
+- staggered adoption designs, where treated units are missing their untreated
+  potential outcomes after treatment;
+- synthetic-control and panel-counterfactual settings with partially observed
+  untreated trajectories;
+- panel recommendation or demand problems with many missing entries;
+- structural models where the mean function is only partially observed under
+  realized choices or states.
+
+In all of these settings, the challenge is not only to estimate $\beta$, but to
+reconstruct the latent heterogeneity surface in a way that generalizes
+out-of-sample.
+
+## Taxonomy of Models
+
+### Additive Fixed Effects
+
+The standard panel baseline is
+
+$$
+y_{it} = x_{it}'\beta + \alpha_i + \lambda_t + \varepsilon_{it}.
+$$
+
+This is robust and interpretable, but it assumes the latent surface is additive
+in unit and time. That is often too rigid for counterfactual prediction.
+
+### Grouped Fixed Effects
+
+Bonhomme and Manresa (2015) propose
+
+$$
+y_{it} = x_{it}'\beta + a_{g(i),t} + \varepsilon_{it},
+$$
+
+where the group assignment $g(i)$ is latent and takes finitely many values.
+
+Interpretation:
+
+- units belong to a small number of latent archetypes;
+- each archetype has its own time path;
+- heterogeneity is discrete, not fully continuous.
+
+This is attractive when:
+
+- one believes in persistent types;
+- stronger pooling is needed than unit FE provides;
+- interpretability matters.
+
+### Interactive Fixed Effects
+
+Bai (2009) studies the continuous-factor analogue
+
+$$
+y_{it} = x_{it}'\beta + a_i^\top b_t + \varepsilon_{it},
+$$
+
+with rank $r$ small.
+
+This allows continuous latent variation across units and richer time patterns
+than additive FE.
+
+### Generalized Matrix Completion / Latent-Factor GLMs
+
+The most general version for this library is
+
+$$
+\mathbb E[Y_{it}\mid X_{it},A,B] = g^{-1}(x_{it}'\beta + a_i^\top b_t),
+$$
+
+or equivalently
+
+$$
+\min_{\beta,A,B}\sum_{(i,t)\in\Omega}
+\ell(Y_{it}, x_{it}'\beta + a_i^\top b_t)
++
+\mathcal R(A,B,\beta),
+$$
+
+where $\Omega$ is the observed set and $\ell$ is the appropriate GLM loss.
+
+This nests:
+
+- Gaussian interactive FE;
+- Bernoulli-logit or probit factor models;
+- Poisson factor models;
+- matrix completion with observed covariates;
+- grouped FE when $A$ is constrained to be one-hot.
+
+## Grouped FE as a Constrained Low-Rank Model
+
+Write
+
+$$
+M = AB^\top,
+$$
+
+where $M_{it}=m_{it}$.
+
+Grouped FE is the special case where each row of $A$ is one of the basis
+vectors:
+
+$$
+a_i \in \{e_1,\dots,e_G\}.
+$$
+
+Then $AB^\top$ has only $G$ distinct row-types. So grouped FE is best viewed as
+a discrete low-rank model rather than something conceptually separate from
+matrix completion.
+
+This yields a clean preference rule:
+
+- choose grouped FE when latent heterogeneity is genuinely type-like or when
+  interpretability and strong pooling matter;
+- choose continuous low rank when latent heterogeneity is smooth and prediction
+  is the priority.
+
+## Why These Models Matter for Counterfactual Prediction
+
+Athey et al. (2021) explicitly connect matrix completion methods to causal panel
+data models. Their perspective is useful because it makes the prediction target
+transparent.
+
+Let $\Omega_{\text{train}}$ be the observed untreated cells. Then the workflow
+is:
+
+1. estimate the latent untreated surface on $\Omega_{\text{train}}$;
+2. validate on held-out untreated cells;
+3. predict untreated potential outcomes on treated or missing cells;
+4. form treatment effects by comparing observed treated outcomes to predicted
+   untreated outcomes.
+
+This is a prediction problem with causal interpretation layered on top. The
+model does not identify treatment effects by itself; it imposes structure on
+the untreated outcome surface.
+
+## Bias-Variance Tradeoffs
+
+### Grouped FE vs Unit FE
+
+Suppose the truth is
+
+$$
+y_{it} = x_{it}'\beta + \alpha_{it} + \varepsilon_{it},
+$$
+
+and grouped FE approximates $\alpha_{it}$ by $a_{g(i),t}$. Define
+
+$$
+r_{it} = \alpha_{it} - a_{g(i),t}.
+$$
+
+Then the second-step regression sees
+
+$$
+y_{it} = x_{it}'\beta + a_{g(i),t} + r_{it} + \varepsilon_{it}.
+$$
+
+Residualizing by grouped FE gives the decomposition
+
+$$
+\hat\beta_{GFE} - \beta
+=
+(\tilde X'\tilde X)^{-1}\tilde X'r
++
+(\tilde X'\tilde X)^{-1}\tilde X'\varepsilon.
+$$
+
+So:
+
+- the first term is approximation bias;
+- the second term is variance.
+
+Grouped FE can beat unit FE in mean squared error when the reduction in
+variance dominates the approximation bias. That is most plausible when latent
+heterogeneity is truly low-dimensional or type-like.
+
+### Grouped FE vs Continuous Low Rank
+
+If the true latent surface is
+
+$$
+m_{it} = h_t(\theta_i)
+$$
+
+for a low-dimensional continuous type $\theta_i$, then:
+
+- grouped FE approximates $h_t$ by a step function over type space;
+- continuous low rank approximates it by a bilinear factorization.
+
+That implies:
+
+- grouped FE has stronger pooling and more interpretable structure;
+- continuous low rank usually has lower approximation bias when heterogeneity is
+  genuinely continuous;
+- grouped FE may still win in finite samples if the true structure is close to
+  clustered and the stronger shrinkage helps.
+
+## Nonlinear Likelihoods: Where the Payoff Can Be Larger
+
+The strongest motivation for grouped or low-rank latent heterogeneity is often
+not linear panels but nonlinear likelihoods.
+
+Examples:
+
+- binary outcomes:
+  $$
+  \Pr(Y_{it}=1\mid X)=\Lambda(x_{it}'\beta + a_i^\top b_t)
+  $$
+- counts:
+  $$
+  \mathbb E[Y_{it}\mid X]=\exp(x_{it}'\beta + a_i^\top b_t)
+  $$
+
+With unrestricted unit FE:
+
+- the nuisance dimension is large;
+- finite-sample behavior can be unstable;
+- incidental-parameter bias may contaminate common-parameter estimates when $T$
+  is small or moderate.
+
+Grouped or low-rank latent heterogeneity can help by shrinking the nuisance
+space. Bonhomme, Lamadon, and Manresa (2022) emphasize exactly this broader
+dimension-reduction role: discretization is a useful approximation device even
+when heterogeneity is not literally discrete.
+
+## Why PyTorch Is a Good Home for This
+
+Yes: a PyTorch-based econometrics library is a natural place to implement these
+solvers.
+
+The practical optimization target is the factorized nonconvex problem
+
+$$
+\min_{\beta,A,B}
+\sum_{(i,t)\in\Omega}
+\ell(Y_{it}, x_{it}'\beta + a_i^\top b_t)
++
+\lambda_A \|A\|_F^2
++
+\lambda_B \|B\|_F^2,
+$$
+
+possibly with additional constraints or penalties.
+
+PyTorch is well matched to this because:
+
+- autodiff gives link-specific gradients essentially for free;
+- GPU linear algebra matters once $N\times T$ gets large;
+- sparse and masked losses are easy to express;
+- first-order and quasi-Newton optimizers are already available;
+- grouped, continuous, and hybrid constraints can share the same core code.
+
+Convex nuclear-norm estimators remain important theoretically, but factorized
+nonconvex solvers are usually the more practical first implementation in a
+library like this.
+
+## State of the Art: Broadly
+
+There is no universal single best estimator. The landscape is segmented.
+
+### Econometrics
+
+- Bai (2009): interactive FE in linear panels.
+- Chen, Fernández-Val, and Weidner (2021): nonlinear factor models for network
+  and panel data.
+- Bonhomme, Lamadon, and Manresa (2022): discrete approximations to unrestricted
+  heterogeneity in nonlinear and structural settings.
+
+This literature cares about:
+
+- identification and normalization;
+- incidental-parameter bias;
+- large-$N$, large-$T$ asymptotics;
+- interpretability of latent heterogeneity.
+
+### Causal Panel Prediction
+
+- Athey et al. (2021): matrix completion for causal panel counterfactuals.
+
+This literature cares about:
+
+- prediction error on held-out untreated cells;
+- treatment-effect recovery;
+- robustness to missingness patterns induced by policy timing.
+
+### Statistics / Machine Learning
+
+- Udell et al. (2016): generalized low-rank models.
+- Fan, Gong, and Zhu (2019): generalized trace regression with nuclear-norm
+  regularization.
+
+This literature cares about:
+
+- generalized losses beyond Gaussian settings;
+- convex relaxations versus factorized nonconvex solvers;
+- minimax rates and regularization theory.
+
+The practical frontier is a hybrid:
+
+- convex theory for guarantees and sometimes initialization;
+- factorized nonconvex optimization for scalable deployment.
+
+## Problem Specification for `torchonometrics`
+
+The right build target is a generic latent-factor GLM module with grouped FE as
+an optional constrained mode.
+
+### Core Model
+
+Support
+
+$$
+\mu_{it} = g^{-1}(x_{it}'\beta + a_i^\top b_t + o_{it}),
+$$
+
+where:
+
+- $x_{it}$ are observed covariates;
+- $o_{it}$ is an optional offset;
+- $A\in\mathbb R^{N\times r}$ are unit factors;
+- $B\in\mathbb R^{T\times r}$ are time factors.
+
+### Families
+
+At minimum:
+
+- Gaussian
+- Bernoulli-logit
+- Poisson
+
+### Observation Layout
+
+Support both:
+
+- dense panel tensors where appropriate;
+- sparse observation lists `(unit_id, time_id, x_it, y_it)` with masks.
+
+That is the right representation for counterfactual prediction problems.
+
+### Estimator Modes
+
+1. continuous low-rank factors
+2. grouped FE with hard assignments
+3. optional hybrid additive FE plus low rank
+
+### Regularization
+
+Start with:
+
+- ridge penalties on $A$ and $B$;
+- optional norm penalties on $\beta$;
+- rank chosen by user, then later by validation.
+
+### Solver Strategy
+
+Use factorized nonconvex optimization as the default:
+
+- Adam / AdamW for large problems;
+- LBFGS for medium dense problems;
+- optional alternating updates for grouped FE.
+
+### Validation and Counterfactual Workflow
+
+For causal use:
+
+1. train only on untreated observed cells;
+2. validate on held-out untreated cells;
+3. choose rank or number of groups by predictive performance;
+4. predict missing untreated outcomes;
+5. aggregate treatment effects externally.
+
+## Proposed API Sketch
+
+```python
+model = LatentFactorGLM(
+    family="poisson",
+    rank=4,
+    penalty=1e-2,
+    optimizer=torch.optim.AdamW,
+    maxiter=2000,
+    device="cuda",
+)
+
+model.fit(
+    X=X,
+    y=y,
+    unit_ids=unit_ids,
+    time_ids=time_ids,
+    mask=train_mask,
+    offset=offset,
+)
+
+mu_hat = model.predict_mean(X, unit_ids, time_ids)
+eta_hat = model.predict_index(X, unit_ids, time_ids)
+```
+
+Grouped FE would be a constrained variant:
+
+```python
+model = GroupedFactorGLM(
+    family="bernoulli",
+    n_groups=8,
+    classification="kmeans",
+    maxiter=200,
+)
+```
+
+## Milestones
+
+### M1: Gaussian Latent-Factor Regression
+
+Implement
+
+$$
+y_{it}=x_{it}'\beta + a_i^\top b_t + \varepsilon_{it}
+$$
+
+with masks, prediction on held-out cells, and ridge regularization.
+
+### M2: Bernoulli and Poisson Latent-Factor GLMs
+
+Extend the loss family while keeping the same factorized solver.
+
+### M3: Grouped FE Mode
+
+Add hard or soft assignment constraints so grouped FE becomes a specialization
+of the generic latent-factor module.
+
+### M4: Counterfactual Utilities
+
+Add evaluation helpers specifically for train/validation/prediction splits on
+untreated cells.
+
+## Minimal Usage Sketch
+
+```{python}
+#| eval: false
+import torch
+from torchonometrics import LatentFactorGLM
+
+model = LatentFactorGLM(
+    family="bernoulli",
+    rank=4,
+    penalty=1e-2,
+    optimizer=torch.optim.AdamW,
+    device="cuda",
+)
+
+model.fit(
+    X=X,
+    y=y,
+    unit_ids=unit_ids,
+    time_ids=time_ids,
+    mask=untreated_mask,
+)
+
+y0_hat = model.predict_mean(X, unit_ids, time_ids)
+```
+
+## References
+
+- Bai, J. (2009). Panel Data Models with Interactive Fixed Effects. *Econometrica*, 77(4), 1229-1279.
+- Bonhomme, S., and Manresa, E. (2015). [Grouped Patterns of Heterogeneity in Panel Data](https://doi.org/10.3982/ECTA11319). *Econometrica*, 83(3), 1147-1184.
+- Bonhomme, S., Lamadon, T., and Manresa, E. (2022). [Discretizing Unobserved Heterogeneity](https://arxiv.org/abs/2102.02124). *Econometrica*, 90(2), 625-643.
+- Athey, S., Bayati, M., Doudchenko, N., Imbens, G., and Khosravi, K. (2021). [Matrix Completion Methods for Causal Panel Data Models](https://arxiv.org/abs/1710.10251). *Journal of the American Statistical Association*, 116(536), 1716-1730.
+- Chen, M., Fernández-Val, I., and Weidner, M. (2021). [Nonlinear Factor Models for Network and Panel Data](https://arxiv.org/abs/1412.5647). *Journal of Econometrics*, 220(2), 296-324.
+- Udell, M., Horn, C., Zadeh, R., and Boyd, S. (2016). [Generalized Low Rank Models](https://arxiv.org/abs/1410.0342). *Foundations and Trends in Machine Learning*, 9(1), 1-118.
+- Fan, J., Gong, W., and Zhu, Z. (2019). [Generalized High-Dimensional Trace Regression via Nuclear Norm Regularization](https://arxiv.org/abs/1710.08083). *Annals of Statistics*, 47(5), 2633-2663.
