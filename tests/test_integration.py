@@ -1,8 +1,10 @@
 """
 Integration tests for torchonometrics functionality
 """
+import numpy as np
 import torch
 import pytest
+from scipy import sparse
 from torchonometrics.linear import LinearRegression
 from torchonometrics.mle import LogisticRegression, PoissonRegression
 
@@ -170,6 +172,144 @@ class TestMaximumLikelihood:
         # Test prediction
         y_pred = model.predict(X_with_intercept)
         assert torch.all(y_pred >= 0)  # Predictions should be non-negative
+
+    def test_logistic_regression_with_fixed_effects_and_offset(self):
+        """Test FE-aware logistic regression with offset and inference."""
+        torch.manual_seed(0)
+        n_groups, group_size = 30, 20
+        n_obs = n_groups * group_size
+
+        X = torch.randn(n_obs, 2)
+        group_ids = torch.repeat_interleave(torch.arange(n_groups), group_size)
+        offset = 0.25 * torch.randn(n_obs)
+        true_coef = torch.tensor([0.8, -0.5])
+        group_effects = 0.6 * torch.randn(n_groups)
+
+        eta = X @ true_coef + group_effects[group_ids] + offset
+        y = torch.bernoulli(torch.sigmoid(eta)).to(torch.float32)
+
+        model = LogisticRegression(maxiter=80, device="cpu")
+        model.fit(X, y, fe=[group_ids], offset=offset)
+
+        coef_mse = torch.mean((model.params["coef"] - true_coef) ** 2)
+        assert coef_mse < 0.02, f"High FE-logit coefficient MSE: {coef_mse}"
+        assert "fe_coef" in model.params
+        assert model.params["fe_coef"][0].shape[0] == n_groups
+        assert torch.all(torch.isfinite(model.params["se"]))
+        assert torch.all(torch.isfinite(model.params["vcov"]))
+
+        probs = model.predict_proba(X, fe=[group_ids], offset=offset)
+        preds = model.predict(X, fe=[group_ids], offset=offset)
+        assert probs.shape == y.shape
+        assert torch.all((probs >= 0) & (probs <= 1))
+        assert torch.all((preds == 0) | (preds == 1))
+
+    def test_poisson_regression_with_fixed_effects_and_hdfe_inference(self):
+        """Test FE-aware Poisson regression and hdfe-style diagonal FE SE output."""
+        torch.manual_seed(1)
+        n_groups, group_size = 25, 30
+        n_obs = n_groups * group_size
+
+        X = torch.randn(n_obs, 2)
+        group_ids = torch.repeat_interleave(torch.arange(n_groups), group_size)
+        true_coef = torch.tensor([0.4, -0.3])
+        group_effects = 0.4 * torch.randn(n_groups)
+
+        eta = X @ true_coef + group_effects[group_ids]
+        y = torch.poisson(torch.exp(eta))
+
+        model = PoissonRegression(maxiter=80, device="cpu")
+        model.fit(X, y, fe=[group_ids], hdfe_index=0)
+
+        coef_mse = torch.mean((model.params["coef"] - true_coef) ** 2)
+        assert coef_mse < 0.01, f"High FE-poisson coefficient MSE: {coef_mse}"
+        assert "fe_se_diag" in model.params
+        assert model.params["fe_se_diag"].shape[0] == n_groups
+        assert torch.all(torch.isfinite(model.params["fe_se_diag"]))
+        assert torch.all(torch.isfinite(model.params["se"]))
+        assert torch.all(torch.isfinite(model.params["vcov"]))
+
+        y_pred = model.predict(X, fe=[group_ids])
+        assert torch.all(y_pred >= 0)
+
+    def test_fe_design_matches_id_path(self):
+        """Test sparse FE design input matches the ID-vector path."""
+        torch.manual_seed(2)
+        n_groups, group_size = 20, 25
+        n_obs = n_groups * group_size
+
+        X = torch.randn(n_obs, 2)
+        group_ids = torch.repeat_interleave(torch.arange(n_groups), group_size)
+        true_coef = torch.tensor([0.7, -0.4])
+        group_effects = 0.5 * torch.randn(n_groups)
+
+        eta = X @ true_coef + group_effects[group_ids]
+        y = torch.bernoulli(torch.sigmoid(eta)).to(torch.float32)
+
+        row_index = torch.arange(n_obs).numpy()
+        csr = sparse.csr_matrix(
+            (
+                np.ones(n_obs),
+                (row_index, group_ids.numpy()),
+            ),
+            shape=(n_obs, n_groups),
+        )
+
+        model_ids = LogisticRegression(maxiter=80, device="cpu")
+        model_ids.fit(X, y, fe=[group_ids])
+
+        model_design = LogisticRegression(maxiter=80, device="cpu")
+        model_design.fit(X, y, fe_design=[csr])
+
+        assert torch.allclose(
+            model_ids.params["coef"],
+            model_design.params["coef"],
+            atol=1e-5,
+            rtol=1e-5,
+        )
+        assert torch.allclose(
+            model_ids.params["fe_coef"][0],
+            model_design.params["fe_coef"][0],
+            atol=1e-5,
+            rtol=1e-5,
+        )
+
+    def test_minibatch_fe_logit_close_to_full_batch(self):
+        """Test mini-batch FE-logit estimates stay close to full-batch Adam."""
+        torch.manual_seed(2)
+        n_groups, group_size = 20, 30
+        n_obs = n_groups * group_size
+
+        X = torch.randn(n_obs, 2)
+        group_ids = torch.repeat_interleave(torch.arange(n_groups), group_size)
+        true_coef = torch.tensor([0.6, -0.25])
+        group_effects = 0.45 * torch.randn(n_groups)
+
+        eta = X @ true_coef + group_effects[group_ids]
+        y = torch.bernoulli(torch.sigmoid(eta)).to(torch.float32)
+
+        full_batch = LogisticRegression(
+            optimizer=torch.optim.Adam,
+            maxiter=800,
+            tol=0.0,
+            device="cpu",
+        )
+        full_batch.fit(X, y, fe=[group_ids])
+
+        minibatch = LogisticRegression(
+            optimizer=torch.optim.Adam,
+            maxiter=800,
+            tol=0.0,
+            device="cpu",
+        )
+        minibatch.fit(X, y, fe=[group_ids], batch_size=96)
+
+        assert torch.allclose(
+            full_batch.params["coef"],
+            minibatch.params["coef"],
+            atol=0.08,
+            rtol=0.0,
+        )
 
 
 class TestDeviceHandling:
