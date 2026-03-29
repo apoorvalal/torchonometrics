@@ -104,6 +104,47 @@ probs = model.predict_proba(X)
 classes = model.predict(X, threshold=0.5)
 ```
 
+### Fixed-Effects Maximum Likelihood
+
+```python
+import torch
+from torchonometrics import LogisticRegression, PoissonRegression
+
+n_firms, n_years = 50, 12
+n_obs = n_firms * n_years
+
+X = torch.randn(n_obs, 2)
+firm_ids = torch.repeat_interleave(torch.arange(n_firms), n_years)
+year_ids = torch.tile(torch.arange(n_years), (n_firms,))
+offset = 0.1 * torch.randn(n_obs)
+
+# Fixed-effects logit
+logit = LogisticRegression(maxiter=100)
+logit.fit(
+    X,
+    y_binary,
+    fe=[firm_ids, year_ids],
+    offset=offset,
+    hdfe_index=0,
+)
+print(logit.params["coef"])
+print(logit.params["se"])
+print(logit.params["fe_se_diag"])  # diagonal SEs for the hdfe block
+
+# Fixed-effects Poisson
+poisson = PoissonRegression(maxiter=100)
+poisson.fit(
+    X,
+    y_count,
+    fe=[firm_ids],
+)
+print(poisson.params["coef"])
+print(poisson.params["fe_coef"][0])
+```
+
+Sparse FE incidence matrices are also supported through `fe_design=[csr_block, ...]`
+when you already have one-hot FE structures in CSR or COO format.
+
 ### Discrete Choice: Low-Rank Logit
 
 ```python
@@ -176,6 +217,11 @@ Multi-way fixed effects are eliminated via alternating projections (Gaure, 2013)
 $$\ddot{y}_{it} = \ddot{x}_{it}'\beta + \ddot{\epsilon}_{it}$$
 
 where $\ddot{z}_{it} = z_{it} - \bar{z}_{i\cdot} - \bar{z}_{\cdot t} + \bar{z}_{\cdot\cdot}$ is the within transformation.
+
+For nonlinear FE models such as logit and Poisson, `torchonometrics` estimates
+the fixed effects directly rather than applying a within transformation. Those
+estimators can be useful for panel GLMs, but they remain subject to incidental
+parameter bias in short panels.
 
 ### Discrete Choice
 
