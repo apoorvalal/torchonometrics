@@ -52,6 +52,7 @@ docs = [
   "sphinx-rtd-theme",
   "nbsphinx",
   "jupyter",
+  "matplotlib>=3.10.8",
 ]
 test = [
   "pytest>=7.0",

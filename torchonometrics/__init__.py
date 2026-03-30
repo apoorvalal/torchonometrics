@@ -20,6 +20,7 @@ from .linear import LinearRegression
 from .mle import LogisticRegression, PoissonRegression, MaximumLikelihoodEstimator
 from .demean import demean_torch, prepare_fixed_effects
 from .grouped_fe import KNNGroupedFixedEffects, build_panel_embeddings
+from .latent_factor import LatentFactorGLM
 
 __all__ = [
     "BaseEstimator", 
@@ -29,6 +30,7 @@ __all__ = [
     "PoissonRegression",
     "KNNGroupedFixedEffects",
     "build_panel_embeddings",
+    "LatentFactorGLM",
     "demean_torch",
     "prepare_fixed_effects",
 ]
