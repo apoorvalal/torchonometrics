@@ -1,10 +1,10 @@
 ---
-title: torchonometrics mathematical notes
+title: trex mathematical notes
 geometry: "margin=0.5in"
 fontsize: 12pt
 ---
 
-This document provides a detailed mathematical exposition of the estimators implemented in the `torchonometrics` library. The library focuses on GPU-accelerated econometric estimation using PyTorch, with particular emphasis on method of moments estimators.
+This document provides a detailed mathematical exposition of the estimators implemented in the `trex` library. The library focuses on GPU-accelerated econometric estimation using PyTorch, with particular emphasis on method of moments estimators.
 
 ## 1. Generalized Method of Moments (GMM)
 

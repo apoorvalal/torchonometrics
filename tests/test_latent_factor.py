@@ -1,7 +1,7 @@
 import pytest
 import torch
 
-from torchonometrics import LatentFactorGLM
+from trex import LatentFactorGLM
 
 
 def _make_gaussian_panel(

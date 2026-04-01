@@ -3,7 +3,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "torchonometrics"
+name = "trex"
 version = "0.1.0"
 dependencies = [
   "torch>=2.0.0",
@@ -34,6 +34,9 @@ classifiers = [
 [project.urls]
 Homepage = "https://github.com/apoorvalal/torchonometrics"
 Repository = "https://github.com/apoorvalal/torchonometrics"
+
+[tool.hatch.build.targets.wheel]
+packages = ["trex"]
 
 [project.optional-dependencies]
 dev = [

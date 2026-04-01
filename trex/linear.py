@@ -46,7 +46,7 @@ class LinearRegression(BaseEstimator):
     Examples
     --------
     >>> import torch
-    >>> from torchonometrics import LinearRegression
+    >>> from trex import LinearRegression
     >>>
     >>> # Basic regression
     >>> X = torch.randn(100, 5)

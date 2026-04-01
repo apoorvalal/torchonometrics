@@ -1,6 +1,6 @@
 import pytest
 import torch
-from torchonometrics.choice import RustNFP, ReplacementUtility, DynamicChoiceData, estimate_transition_matrix
+from trex.choice import RustNFP, ReplacementUtility, DynamicChoiceData, estimate_transition_matrix
 
 @pytest.fixture
 def rust_nfp_model():

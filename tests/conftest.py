@@ -1,5 +1,5 @@
 """
-Pytest configuration and fixtures for torchonometrics tests
+Pytest configuration and fixtures for trex tests
 """
 import torch
 import pytest

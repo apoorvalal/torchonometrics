@@ -1,4 +1,4 @@
-# torchonometrics: GPU-accelerated econometrics in PyTorch
+# trex: GPU-accelerated econometrics in PyTorch
 
 High-performance econometric estimation using PyTorch with first-class GPU support and automatic differentiation. Implements method of moments estimators (GMM, GEL), maximum likelihood models, and discrete choice models with modern deep learning workflows.
 
@@ -22,8 +22,8 @@ High-performance econometric estimation using PyTorch with first-class GPU suppo
 ## Installation
 
 ```bash
-git clone https://github.com/apoorvalal/torchonometrics
-cd torchonometrics
+git clone https://github.com/apoorvalal/torchonometrics trex
+cd trex
 uv venv
 source .venv/bin/activate
 uv sync
@@ -46,7 +46,7 @@ The rendered site is written to `docs/api/` by default.
 
 ```python
 import torch
-from torchonometrics import LinearRegression
+from trex import LinearRegression
 
 # Panel data: firms × years
 n_firms, n_years = 100, 10
@@ -72,7 +72,7 @@ print(f"Robust SE: {model.params['se']}")
 ### Instrumental Variables via GMM
 
 ```python
-from torchonometrics.gmm import GMMEstimator
+from trex.gmm import GMMEstimator
 
 # Define IV moment condition: E[Z'(Y - X'β)] = 0
 def iv_moment(Z, Y, X, beta):
@@ -87,7 +87,7 @@ print(gmm.summary())
 ### Maximum Likelihood Estimation
 
 ```python
-from torchonometrics import LogisticRegression
+from trex import LogisticRegression
 
 # Binary response model
 X = torch.randn(1000, 5)
@@ -108,7 +108,7 @@ classes = model.predict(X, threshold=0.5)
 
 ```python
 import torch
-from torchonometrics import LogisticRegression, PoissonRegression
+from trex import LogisticRegression, PoissonRegression
 
 n_firms, n_years = 50, 12
 n_obs = n_firms * n_years
@@ -148,7 +148,7 @@ when you already have one-hot FE structures in CSR or COO format.
 ### Discrete Choice: Low-Rank Logit
 
 ```python
-from torchonometrics.choice import LowRankLogit
+from trex.choice import LowRankLogit
 
 # Large-scale choice data with varying assortments
 n_users, n_items, rank = 1000, 100, 5
@@ -218,7 +218,7 @@ $$\ddot{y}_{it} = \ddot{x}_{it}'\beta + \ddot{\epsilon}_{it}$$
 
 where $\ddot{z}_{it} = z_{it} - \bar{z}_{i\cdot} - \bar{z}_{\cdot t} + \bar{z}_{\cdot\cdot}$ is the within transformation.
 
-For nonlinear FE models such as logit and Poisson, `torchonometrics` estimates
+For nonlinear FE models such as logit and Poisson, `trex` estimates
 the fixed effects directly rather than applying a within transformation. Those
 estimators can be useful for panel GLMs, but they remain subject to incidental
 parameter bias in short panels.
@@ -274,9 +274,9 @@ loader = DataLoader(dataset, batch_size=1024, shuffle=True)
 
 ## Comparison with JAX Implementation
 
-torchonometrics is a PyTorch port of jaxonometrics with enhanced device management:
+trex is a PyTorch port of jaxonometrics with enhanced device management:
 
-| Feature | jaxonometrics | torchonometrics |
+| Feature | jaxonometrics | trex |
 |---------|---------------|-----------------|
 | Backend | JAX | PyTorch |
 | M-Series Mac | Metal issues | Native MPS support |
@@ -292,8 +292,8 @@ Contributions welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
 ## Citation
 
 ```bibtex
-@software{torchonometrics,
-  title = {torchonometrics: GPU-accelerated econometrics in PyTorch},
+@software{trex,
+  title = {trex: GPU-accelerated econometrics in PyTorch},
   author = {Lal, Apoorva},
   year = {2025},
   url = {https://github.com/apoorvalal/torchonometrics}

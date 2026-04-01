@@ -1,12 +1,12 @@
 """
-Integration tests for torchonometrics functionality
+Integration tests for trex functionality
 """
 import numpy as np
 import torch
 import pytest
 from scipy import sparse
-from torchonometrics.linear import LinearRegression
-from torchonometrics.mle import LogisticRegression, PoissonRegression
+from trex.linear import LinearRegression
+from trex.mle import LogisticRegression, PoissonRegression
 
 
 class TestLinearRegression:

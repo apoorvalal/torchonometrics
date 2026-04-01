@@ -20,7 +20,7 @@ execute:
 
 This note reviews latent-factor models for counterfactual prediction in panels
 and panel-like matrices, and turns that review into a concrete problem
-specification for `torchonometrics`.
+specification for `trex`.
 
 The key point is that grouped fixed effects, interactive fixed effects, matrix
 completion, and generalized low-rank GLMs are all variations on the same latent
@@ -44,7 +44,7 @@ row factors to be one-hot. Matrix completion is the continuous-factor analogue.
 
 The implementation conclusion is straightforward:
 
-> `torchonometrics` should eventually support a generic family of latent-factor
+> `trex` should eventually support a generic family of latent-factor
 > GLM estimators of the form
 > $g^{-1}(x_{it}'\beta + a_i^\top b_t)$,
 > with grouped FE as an optional specialization.
@@ -362,7 +362,7 @@ The practical frontier is a hybrid:
 - convex theory for guarantees and sometimes initialization;
 - factorized nonconvex optimization for scalable deployment.
 
-## Problem Specification for `torchonometrics`
+## Problem Specification for `trex`
 
 The right build target is a generic latent-factor GLM module with grouped FE as
 an optional constrained mode.
@@ -498,7 +498,7 @@ untreated cells.
 ```{python}
 #| eval: false
 import torch
-from torchonometrics import LatentFactorGLM
+from trex import LatentFactorGLM
 
 model = LatentFactorGLM(
     family="bernoulli",

@@ -1,1 +1,1 @@
-# Tests for torchonometrics
+# Tests for trex

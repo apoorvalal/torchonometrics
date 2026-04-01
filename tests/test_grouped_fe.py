@@ -1,6 +1,6 @@
 import torch
 
-from torchonometrics.grouped_fe import (
+from trex.grouped_fe import (
     KNNGroupedFixedEffects,
     build_panel_embeddings,
     chunked_knn_indices,

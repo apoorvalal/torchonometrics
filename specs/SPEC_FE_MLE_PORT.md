@@ -1,4 +1,4 @@
-# Specification: Port `fastreg` FE Maximum Likelihood to `torchonometrics`
+# Specification: Port `fastreg` FE Maximum Likelihood to `trex`
 
 ## Goal
 Implement fixed-effects maximum likelihood estimation in Torch with feature parity for the core `fastreg` path:
@@ -15,9 +15,9 @@ Implement fixed-effects maximum likelihood estimation in Torch with feature pari
 - `fastreg/fastreg/utils.py:229` `diag_fisher`
 - `fastreg/fastreg/tools.py:154` `block_inverse`
 
-## Current Torchonometrics Baseline
-- MLE exists for dense `X @ beta` in `torchonometrics/mle.py` (`LogisticRegression`, `PoissonRegression`)
-- Fixed effects machinery exists for OLS via alternating projections in `torchonometrics/linear.py` and `torchonometrics/demean.py`
+## Current Trex Baseline
+- MLE exists for dense `X @ beta` in `trex/mle.py` (`LogisticRegression`, `PoissonRegression`)
+- Fixed effects machinery exists for OLS via alternating projections in `trex/linear.py` and `trex/demean.py`
 - No FE-aware nonlinear MLE path yet
 
 ## Scope
@@ -77,7 +77,7 @@ Identification strategy (Phase 1):
 
 ## Implementation Plan
 1. **Core FE-GLM Engine**
-- Add internal helper(s) in `torchonometrics/mle.py` to:
+- Add internal helper(s) in `trex/mle.py` to:
   - canonicalize FE input:
     - ID vectors -> contiguous indices per factor
     - sparse FE matrices -> validated sparse structure for fast `sparse @ alpha`

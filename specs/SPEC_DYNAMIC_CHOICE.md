@@ -4,7 +4,7 @@
 2026-02-18
 
 ## Objective
-Track the actual implementation state of dynamic discrete choice in `torchonometrics`, identify rough edges, and define the next set of engineering improvements.
+Track the actual implementation state of dynamic discrete choice in `trex`, identify rough edges, and define the next set of engineering improvements.
 
 ## Reference Material (`ref/`)
 - `ref/hj_choice.pdf`: static + dynamic discrete choice foundations, likelihood-based estimation framing.
@@ -14,19 +14,19 @@ Track the actual implementation state of dynamic discrete choice in `torchonomet
 ## Current Implementation Snapshot
 
 ### Implemented Models and Components
-- `torchonometrics/choice/dynamic.py`
+- `trex/choice/dynamic.py`
   - `DynamicChoiceData`: panel data container with validation.
   - `DynamicChoiceModel`: base class with Bellman operator, value iteration, choice-probability mapping, transition/utility hooks.
   - `RustNFP`: nested fixed-point estimator for full-solution dynamic choice likelihood.
   - `HotzMillerCCP`: CCP-based estimator with inversion precomputation.
   - `LinearFlowUtility`, `ReplacementUtility`: flow-utility parameterizations.
-- `torchonometrics/choice/transitions.py`
+- `trex/choice/transitions.py`
   - `estimate_transition_matrix` (frequency estimator implemented).
   - `discretize_state` (uniform + quantile binning).
   - `DeepValueFunction` (neural value-function approximator scaffold).
-- `torchonometrics/choice/ccp_estimators.py`
+- `trex/choice/ccp_estimators.py`
   - `estimate_ccps` (frequency estimator implemented).
-- Public API exports are wired in `torchonometrics/choice/__init__.py`.
+- Public API exports are wired in `trex/choice/__init__.py`.
 
 ### Testing Coverage (Dynamic Area)
 - `tests/test_dynamic_choice.py`: data validation, Bellman/value-iteration behavior, transitions, discretization, utilities, probability mapping.
