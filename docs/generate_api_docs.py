@@ -4,7 +4,9 @@
 from __future__ import annotations
 
 import importlib.util
+import base64
 import pkgutil
+import shutil
 import sys
 import types
 from pathlib import Path
@@ -13,6 +15,17 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
+
+LOGO_PATH = REPO_ROOT / "trexlogo.svg"
+PROJECT_URL = "https://github.com/apoorvalal/trex"
+
+
+def _asset_data_uri(path: Path, mime_type: str) -> str | None:
+    """Embed small static assets directly into generated HTML."""
+    if not path.exists():
+        return None
+    encoded = base64.b64encode(path.read_bytes()).decode("ascii")
+    return f"data:{mime_type};base64,{encoded}"
 
 
 def _ensure_torch_stub() -> None:
@@ -117,11 +130,18 @@ def _all_modules() -> list[str]:
 def main() -> None:
     output_dir = Path(sys.argv[1]) if len(sys.argv) > 1 else Path("docs/api")
     _ensure_torch_stub()
+    shutil.rmtree(output_dir, ignore_errors=True)
 
     import pdoc
     import pdoc.render
 
-    pdoc.render.configure(docformat="google", math=True)
+    pdoc.render.configure(
+        docformat="google",
+        math=True,
+        logo=_asset_data_uri(LOGO_PATH, "image/svg+xml"),
+        logo_link=PROJECT_URL,
+        favicon=_asset_data_uri(LOGO_PATH, "image/svg+xml"),
+    )
     modules = _all_modules()
     pdoc.pdoc(*modules, output_directory=output_dir)
     print(f"API docs generated at {output_dir / 'index.html'}")

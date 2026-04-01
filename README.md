@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="trexlogo.svg" alt="trex logo" width="320">
+</p>
+
 # trex: GPU-accelerated econometrics in PyTorch
 
 High-performance econometric estimation using PyTorch with first-class GPU support and automatic differentiation. Implements method of moments estimators (GMM, GEL), maximum likelihood models, and discrete choice models with modern deep learning workflows.
@@ -22,7 +26,7 @@ High-performance econometric estimation using PyTorch with first-class GPU suppo
 ## Installation
 
 ```bash
-git clone https://github.com/apoorvalal/torchonometrics trex
+git clone https://github.com/apoorvalal/trex
 cd trex
 uv venv
 source .venv/bin/activate
@@ -296,7 +300,7 @@ Contributions welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
   title = {trex: GPU-accelerated econometrics in PyTorch},
   author = {Lal, Apoorva},
   year = {2025},
-  url = {https://github.com/apoorvalal/torchonometrics}
+  url = {https://github.com/apoorvalal/trex}
 }
 ```
 

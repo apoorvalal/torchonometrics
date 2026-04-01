@@ -32,8 +32,8 @@ classifiers = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/apoorvalal/torchonometrics"
-Repository = "https://github.com/apoorvalal/torchonometrics"
+Homepage = "https://github.com/apoorvalal/trex"
+Repository = "https://github.com/apoorvalal/trex"
 
 [tool.hatch.build.targets.wheel]
 packages = ["trex"]
