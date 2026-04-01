@@ -4,7 +4,7 @@ Tests for Hotz-Miller CCP Estimator.
 
 import torch
 import pytest
-from torchonometrics.choice.dynamic import HotzMillerCCP, ReplacementUtility, DynamicChoiceData
+from trex.choice.dynamic import HotzMillerCCP, ReplacementUtility, DynamicChoiceData
 
 def test_hotz_miller_estimation_recovery():
     # Setup

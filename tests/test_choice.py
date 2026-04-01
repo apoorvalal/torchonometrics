@@ -1,6 +1,6 @@
 import torch
 
-from torchonometrics.choice import BinaryLogit, BinaryProbit, MultinomialLogit, LowRankLogit
+from trex.choice import BinaryLogit, BinaryProbit, MultinomialLogit, LowRankLogit
 
 
 def test_binary_logit_smoke():

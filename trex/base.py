@@ -5,7 +5,7 @@ import torch
 
 
 class BaseEstimator(ABC):
-    """Base class for all estimators in torchonometrics.
+    """Base class for all estimators in trex.
 
     Parameters
     ----------

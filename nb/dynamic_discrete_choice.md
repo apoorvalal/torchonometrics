@@ -158,7 +158,7 @@ Recent work combines these:
 *   Using Deep Neural Networks to approximate the Value Function $V(s)$ (DQN style) to handle the "Curse of Dimensionality" in NFP.
 *   Using Neural Networks for the first-stage CCPs in Hotz-Miller to handle continuous state spaces.
 
-## 6. Summary for `torchonometrics` Users
+## 6. Summary for `trex` Users
 
 | Method | Class | Complexity | Best For |
 | :--- | :--- | :--- | :--- |
@@ -166,4 +166,4 @@ Recent work combines these:
 | **CCP** | `HotzMillerCCP` | Low | Large state spaces; complex dynamics; when "good enough" first-stage estimates exist. |
 | **Deep DDC** | `DeepValueFunction` | Variable | Continuous/High-dim states where tabular methods fail. |
 
-The `torchonometrics` library implements these using PyTorch's automatic differentiation, removing the need for deriving complex analytical gradients for the likelihood functions.
+The `trex` library implements these using PyTorch's automatic differentiation, removing the need for deriving complex analytical gradients for the likelihood functions.

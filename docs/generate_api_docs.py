@@ -99,15 +99,15 @@ def _ensure_torch_stub() -> None:
 
 
 def _all_modules() -> list[str]:
-    """Return full module tree under torchonometrics."""
-    import torchonometrics
+    """Return full module tree under trex."""
+    import trex
 
-    modules = [torchonometrics.__name__]
+    modules = [trex.__name__]
     modules.extend(
         sorted(
             m.name
             for m in pkgutil.walk_packages(
-                torchonometrics.__path__, torchonometrics.__name__ + "."
+                trex.__path__, trex.__name__ + "."
             )
         )
     )

@@ -1,7 +1,7 @@
 from abc import abstractmethod
 import torch
 
-from torchonometrics.mle import MaximumLikelihoodEstimator
+from trex.mle import MaximumLikelihoodEstimator
 
 
 class ChoiceModel(MaximumLikelihoodEstimator):

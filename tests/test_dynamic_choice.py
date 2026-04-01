@@ -12,13 +12,13 @@ Tests cover:
 import torch
 import pytest
 
-from torchonometrics.choice.dynamic import (
+from trex.choice.dynamic import (
     DynamicChoiceData,
     DynamicChoiceModel,
     LinearFlowUtility,
     ReplacementUtility,
 )
-from torchonometrics.choice.transitions import (
+from trex.choice.transitions import (
     estimate_transition_matrix,
     discretize_state,
     DeepValueFunction,

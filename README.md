@@ -1,4 +1,4 @@
-# torchonometrics: GPU-accelerated econometrics in PyTorch
+# trex: GPU-accelerated econometrics in PyTorch
 
 High-performance econometric estimation using PyTorch with first-class GPU support and automatic differentiation. Implements method of moments estimators (GMM, GEL), maximum likelihood models, and discrete choice models with modern deep learning workflows.
 
@@ -22,8 +22,8 @@ High-performance econometric estimation using PyTorch with first-class GPU suppo
 ## Installation
 
 ```bash
-git clone https://github.com/apoorvalal/torchonometrics
-cd torchonometrics
+git clone https://github.com/apoorvalal/torchonometrics trex
+cd trex
 uv venv
 source .venv/bin/activate
 uv sync
@@ -46,7 +46,7 @@ The rendered site is written to `docs/api/` by default.
 
 ```python
 import torch
-from torchonometrics import LinearRegression
+from trex import LinearRegression
 
 # Panel data: firms × years
 n_firms, n_years = 100, 10
@@ -72,7 +72,7 @@ print(f"Robust SE: {model.params['se']}")
 ### Instrumental Variables via GMM
 
 ```python
-from torchonometrics.gmm import GMMEstimator
+from trex.gmm import GMMEstimator
 
 # Define IV moment condition: E[Z'(Y - X'β)] = 0
 def iv_moment(Z, Y, X, beta):
@@ -87,7 +87,7 @@ print(gmm.summary())
 ### Maximum Likelihood Estimation
 
 ```python
-from torchonometrics import LogisticRegression
+from trex import LogisticRegression
 
 # Binary response model
 X = torch.randn(1000, 5)
@@ -104,10 +104,51 @@ probs = model.predict_proba(X)
 classes = model.predict(X, threshold=0.5)
 ```
 
+### Fixed-Effects Maximum Likelihood
+
+```python
+import torch
+from trex import LogisticRegression, PoissonRegression
+
+n_firms, n_years = 50, 12
+n_obs = n_firms * n_years
+
+X = torch.randn(n_obs, 2)
+firm_ids = torch.repeat_interleave(torch.arange(n_firms), n_years)
+year_ids = torch.tile(torch.arange(n_years), (n_firms,))
+offset = 0.1 * torch.randn(n_obs)
+
+# Fixed-effects logit
+logit = LogisticRegression(maxiter=100)
+logit.fit(
+    X,
+    y_binary,
+    fe=[firm_ids, year_ids],
+    offset=offset,
+    hdfe_index=0,
+)
+print(logit.params["coef"])
+print(logit.params["se"])
+print(logit.params["fe_se_diag"])  # diagonal SEs for the hdfe block
+
+# Fixed-effects Poisson
+poisson = PoissonRegression(maxiter=100)
+poisson.fit(
+    X,
+    y_count,
+    fe=[firm_ids],
+)
+print(poisson.params["coef"])
+print(poisson.params["fe_coef"][0])
+```
+
+Sparse FE incidence matrices are also supported through `fe_design=[csr_block, ...]`
+when you already have one-hot FE structures in CSR or COO format.
+
 ### Discrete Choice: Low-Rank Logit
 
 ```python
-from torchonometrics.choice import LowRankLogit
+from trex.choice import LowRankLogit
 
 # Large-scale choice data with varying assortments
 n_users, n_items, rank = 1000, 100, 5
@@ -177,6 +218,11 @@ $$\ddot{y}_{it} = \ddot{x}_{it}'\beta + \ddot{\epsilon}_{it}$$
 
 where $\ddot{z}_{it} = z_{it} - \bar{z}_{i\cdot} - \bar{z}_{\cdot t} + \bar{z}_{\cdot\cdot}$ is the within transformation.
 
+For nonlinear FE models such as logit and Poisson, `trex` estimates
+the fixed effects directly rather than applying a within transformation. Those
+estimators can be useful for panel GLMs, but they remain subject to incidental
+parameter bias in short panels.
+
 ### Discrete Choice
 
 The low-rank logit model (Kallus & Udell, 2016) factorizes user-item utilities as $\Theta = AB'$ with rank $r \ll \min(n_{users}, n_{items})$, enabling scalable estimation for large choice sets with varying assortments.
@@ -228,9 +274,9 @@ loader = DataLoader(dataset, batch_size=1024, shuffle=True)
 
 ## Comparison with JAX Implementation
 
-torchonometrics is a PyTorch port of jaxonometrics with enhanced device management:
+trex is a PyTorch port of jaxonometrics with enhanced device management:
 
-| Feature | jaxonometrics | torchonometrics |
+| Feature | jaxonometrics | trex |
 |---------|---------------|-----------------|
 | Backend | JAX | PyTorch |
 | M-Series Mac | Metal issues | Native MPS support |
@@ -246,8 +292,8 @@ Contributions welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
 ## Citation
 
 ```bibtex
-@software{torchonometrics,
-  title = {torchonometrics: GPU-accelerated econometrics in PyTorch},
+@software{trex,
+  title = {trex: GPU-accelerated econometrics in PyTorch},
   author = {Lal, Apoorva},
   year = {2025},
   url = {https://github.com/apoorvalal/torchonometrics}
