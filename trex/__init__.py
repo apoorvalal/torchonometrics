@@ -21,6 +21,7 @@ from .mle import LogisticRegression, PoissonRegression, MaximumLikelihoodEstimat
 from .demean import demean_torch, prepare_fixed_effects
 from .grouped_fe import KNNGroupedFixedEffects, build_panel_embeddings
 from .latent_factor import LatentFactorGLM
+from .policy_learning import policyCATElearner
 
 __all__ = [
     "BaseEstimator", 
@@ -31,6 +32,7 @@ __all__ = [
     "KNNGroupedFixedEffects",
     "build_panel_embeddings",
     "LatentFactorGLM",
+    "policyCATElearner",
     "demean_torch",
     "prepare_fixed_effects",
 ]

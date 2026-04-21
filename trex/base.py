@@ -17,7 +17,12 @@ class BaseEstimator(ABC):
     def __init__(self, device: Optional[Union[torch.device, str]] = None):
         # Auto-detect best device if not specified
         if device is None:
-            self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+            if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+                self.device = torch.device("mps")
+            elif torch.cuda.is_available():
+                self.device = torch.device("cuda")
+            else:
+                self.device = torch.device("cpu")
         else:
             self.device = torch.device(device) if isinstance(device, str) else device
         self.params: Optional[Dict[str, torch.Tensor]] = None
