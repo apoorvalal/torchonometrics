@@ -374,3 +374,28 @@ def test_latent_factor_glm_poisson_recovers_count_mean():
         f"Poisson holdout MSE {latent_mse} did not materially improve on "
         f"rank-0 baseline {baseline_mse}."
     )
+
+
+def test_latent_factor_sparse_fit_rejects_ambiguous_dense_prediction():
+    data = _make_gaussian_panel(seed=31, n_units=7, n_times=4)
+    unit_ids = 100 + 2 * data["unit_ids"]
+    time_ids = 20 + 3 * data["time_ids"]
+
+    model = LatentFactorGLM(
+        rank=1,
+        penalty=1e-3,
+        optimizer=torch.optim.AdamW,
+        optimizer_kwargs={"lr": 0.05, "weight_decay": 0.0},
+        maxiter=400,
+        tol=1e-8,
+        device="cpu",
+    )
+    model.fit(
+        X=data["X_obs"],
+        y=data["y_obs"],
+        unit_ids=unit_ids,
+        time_ids=time_ids,
+    )
+
+    with pytest.raises(ValueError, match="Dense prediction after sparse fitting"):
+        model.predict_mean(data["X_dense"])

@@ -360,10 +360,17 @@ class KNNGroupedFixedEffects(BaseEstimator):
         unit_ids: torch.Tensor,
         time_ids: torch.Tensor,
         classification_features: Optional[torch.Tensor] = None,
+        classification_unit_ids: Optional[torch.Tensor] = None,
         se: Optional[str] = None,
     ) -> "KNNGroupedFixedEffects":
         """
         Estimate grouped fixed effects through KNN smoothing and clustered FE OLS.
+
+        If `classification_features` has one row per unit, rows are assumed to be
+        ordered by `sorted(unique(unit_ids))` unless `classification_unit_ids` is
+        provided. Passing `classification_unit_ids` is safer for shuffled or
+        non-contiguous unit identifiers; features are then aligned internally to
+        the fitted unit ordering.
         """
         X = X.to(self.device)
         y = y.to(self.device)
@@ -377,6 +384,31 @@ class KNNGroupedFixedEffects(BaseEstimator):
             unit_ids=unit_ids,
             time_ids=time_ids,
         )
+        if classification_unit_ids is not None:
+            if classification_features is None:
+                raise ValueError(
+                    "`classification_unit_ids` can only be used with unit-level "
+                    "`classification_features`."
+                )
+            classification_unit_ids = classification_unit_ids.to(self.device).to(dtype=torch.int64)
+            if classification_unit_ids.ndim != 1 or classification_unit_ids.numel() != embeddings.shape[0]:
+                raise ValueError(
+                    "`classification_unit_ids` must be a vector with one entry per "
+                    "unit-level classification-feature row."
+                )
+            if embeddings.shape[0] != unit_levels.numel():
+                raise ValueError(
+                    "`classification_unit_ids` is only valid when `classification_features` "
+                    "has one row per unit, not one row per observation."
+                )
+            sorted_ids, order = torch.sort(classification_unit_ids)
+            if torch.any(sorted_ids[1:] == sorted_ids[:-1]):
+                raise ValueError("`classification_unit_ids` must not contain duplicates.")
+            if sorted_ids.numel() != unit_levels.numel() or not torch.equal(sorted_ids, unit_levels):
+                raise ValueError(
+                    "`classification_unit_ids` must match the sorted unique `unit_ids`."
+                )
+            embeddings = embeddings[order]
 
         neighbor_indices, _ = chunked_knn_indices(
             embeddings=embeddings,
