@@ -21,6 +21,15 @@ from .mle import LogisticRegression, PoissonRegression, MaximumLikelihoodEstimat
 from .demean import demean_torch, prepare_fixed_effects
 from .grouped_fe import KNNGroupedFixedEffects, build_panel_embeddings
 from .latent_factor import LatentFactorGLM
+from .panel import (
+    NuclearNormMatrixCompletion,
+    SyntheticDID,
+    did_estimate,
+    matrix_completion_estimate,
+    panel_estimates,
+    sc_estimate,
+    synthdid_estimate,
+)
 
 __all__ = [
     "BaseEstimator", 
@@ -31,6 +40,13 @@ __all__ = [
     "KNNGroupedFixedEffects",
     "build_panel_embeddings",
     "LatentFactorGLM",
+    "NuclearNormMatrixCompletion",
+    "SyntheticDID",
+    "did_estimate",
+    "sc_estimate",
+    "matrix_completion_estimate",
+    "panel_estimates",
+    "synthdid_estimate",
     "demean_torch",
     "prepare_fixed_effects",
 ]

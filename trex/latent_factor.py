@@ -498,6 +498,7 @@ class LatentFactorGLM(BaseEstimator):
             "time_levels": time_levels.detach(),
             "n_features": X_obs.shape[1],
             "dtype": X_obs.dtype,
+            "layout": "dense" if self._panel_shape is not None else "sparse",
         }
         return self
 
@@ -516,8 +517,15 @@ class LatentFactorGLM(BaseEstimator):
         X = _to_tensor(X, self.device, dtype=dtype)
 
         if X.ndim == 3:
+            if self._panel_shape is None:
+                raise ValueError(
+                    "Dense prediction after sparse fitting is ambiguous: rows/columns "
+                    "would have to be ordered by the fitted sorted unit/time levels. "
+                    "Use observation-list prediction with explicit unit_ids/time_ids, "
+                    "or fit with dense panel inputs."
+                )
             panel_shape = X.shape[:2]
-            if self._panel_shape is not None and panel_shape != self._panel_shape:
+            if panel_shape != self._panel_shape:
                 raise ValueError("Dense prediction panels must match the fitted panel dimensions.")
             n_units, n_times, n_features = X.shape
             if n_features != self._fit_context["n_features"]:
