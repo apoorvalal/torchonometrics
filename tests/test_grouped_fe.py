@@ -99,3 +99,57 @@ def test_knn_grouped_fixed_effects_beta_recovery():
     assert model.group_ids_.shape[0] == n_units
     assert model.group_time_ids_.shape[0] == n_obs
     assert model.neighbor_indices_.shape == (n_units, 5)
+
+
+def test_knn_grouped_fixed_effects_aligns_unit_level_features_with_ids():
+    torch.manual_seed(21)
+    n_groups, units_per_group, n_times = 3, 8, 5
+    n_units = n_groups * units_per_group
+    raw_unit_ids = 100 + 3 * torch.arange(n_units)
+    unit_group = torch.repeat_interleave(torch.arange(n_groups), units_per_group)
+    obs_unit_pos = torch.repeat_interleave(torch.arange(n_units), n_times)
+    unit_ids = raw_unit_ids[obs_unit_pos]
+    time_ids = torch.tile(10 + torch.arange(n_times), (n_units,))
+
+    X = torch.randn(n_units * n_times, 2)
+    true_beta = torch.tensor([0.7, -0.25])
+    group_time_effects = torch.tensor(
+        [[1.5, 1.0, 0.3, -0.2, -0.5], [-0.8, -0.1, 0.4, 0.9, 1.3], [0.2, 0.5, 1.0, 0.7, 0.1]],
+        dtype=X.dtype,
+    )
+    y = X @ true_beta + group_time_effects[unit_group[obs_unit_pos], torch.tile(torch.arange(n_times), (n_units,))]
+
+    features_sorted = group_time_effects[unit_group] + 0.01 * torch.randn(n_units, n_times)
+    perm = torch.randperm(n_units)
+    features_shuffled = features_sorted[perm]
+    feature_unit_ids = raw_unit_ids[perm]
+
+    common = dict(
+        n_groups=n_groups,
+        n_neighbors=3,
+        knn_block_size=8,
+        kmeans_niter=80,
+        use_flash_kmeans=False,
+        device="cpu",
+    )
+    aligned = KNNGroupedFixedEffects(**common)
+    aligned.fit(
+        X=X,
+        y=y,
+        unit_ids=unit_ids,
+        time_ids=time_ids,
+        classification_features=features_shuffled,
+        classification_unit_ids=feature_unit_ids,
+    )
+    sorted_reference = KNNGroupedFixedEffects(**common)
+    sorted_reference.fit(
+        X=X,
+        y=y,
+        unit_ids=unit_ids,
+        time_ids=time_ids,
+        classification_features=features_sorted,
+        classification_unit_ids=raw_unit_ids,
+    )
+
+    assert torch.allclose(aligned.params["coef"], sorted_reference.params["coef"], atol=1e-8)
+    assert torch.equal(aligned.neighbor_indices_, sorted_reference.neighbor_indices_)
