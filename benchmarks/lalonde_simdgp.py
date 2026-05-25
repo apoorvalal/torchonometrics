@@ -28,7 +28,6 @@ import pandas as pd
 import torch
 
 from trex import (
-    CompletionEndpointLLMInContextGenerator,
     SafetensorsLLMInContextGenerator,
     SafetensorsQLORAGenerator,
     TabularDiffusion,
@@ -163,30 +162,6 @@ def fit_and_sample(
         sample_seconds = time.perf_counter() - sample_start
         return postprocess_rows(fake, real.columns), fit_seconds, sample_seconds
 
-    if method == "llama-cpp-icl":
-        model = CompletionEndpointLLMInContextGenerator(
-            endpoint_url=args.completion_url,
-            model=args.completion_model,
-            examples=args.icl_examples,
-            max_new_tokens=args.max_new_tokens,
-            temperature=args.temperature,
-            do_sample=not args.llm_greedy,
-            max_attempts=args.llm_max_attempts,
-            rows_per_prompt=args.llm_rows_per_prompt,
-            progress_path=str(args.output_dir / f"{args.dataset}_{method}_progress.csv"),
-            timeout=args.completion_timeout,
-            prompt_prefix=args.completion_prompt_prefix,
-            prompt_style=args.completion_prompt_style,
-            device=args.device,
-        )
-        fit_start = time.perf_counter()
-        model.fit(real.to_numpy(), column_names=list(real.columns))
-        fit_seconds = time.perf_counter() - fit_start
-        sample_start = time.perf_counter()
-        fake = model.sample(args.sample_size)
-        sample_seconds = time.perf_counter() - sample_start
-        return postprocess_rows(fake, real.columns), fit_seconds, sample_seconds
-
     if method == "llm-qlora":
         _require_safetensors_model(args.llm_model)
         model = SafetensorsQLORAGenerator(
@@ -294,7 +269,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--methods",
         nargs="+",
-        choices=["wgan", "diffusion", "llm-icl", "llm-qlora", "llama-cpp-icl"],
+        choices=["wgan", "diffusion", "llm-icl", "llm-qlora"],
         default=["wgan", "diffusion"],
     )
     parser.add_argument("--output-dir", type=Path, default=Path("tmp/simdgp_benchmark"))
@@ -317,11 +292,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--llm-4bit", action="store_true")
     parser.add_argument("--llm-max-attempts", type=int, default=20)
     parser.add_argument("--llm-rows-per-prompt", type=int, default=None)
-    parser.add_argument("--completion-url", default="http://127.0.0.1:8080/completion")
-    parser.add_argument("--completion-model", default=None)
-    parser.add_argument("--completion-timeout", type=float, default=300.0)
-    parser.add_argument("--completion-prompt-prefix", default="")
-    parser.add_argument("--completion-prompt-style", choices=["plain", "gpt-oss"], default="plain")
     parser.add_argument("--fit-adapter", action="store_true")
     parser.add_argument("--adapter-path", default=None)
     parser.add_argument("--adapter-output", default=None)
