@@ -178,6 +178,10 @@ def fit_and_sample(
                 learning_rate=args.qlora_lr,
                 per_device_train_batch_size=args.qlora_batch_size,
             )
+        elif args.adapter_path is not None:
+            _require_adapter_path(args.adapter_path)
+            model.adapter_path = args.adapter_path
+            model.tokenizer_path = args.adapter_path
         fit_seconds = time.perf_counter() - fit_start
         sample_start = time.perf_counter()
         fake = model.sample(args.sample_size)
@@ -230,6 +234,14 @@ def _require_safetensors_model(model_path: str | None) -> None:
         raise ValueError("Expected a .safetensors file or directory containing safetensors.")
 
 
+def _require_adapter_path(adapter_path: str) -> None:
+    path = Path(adapter_path)
+    if not path.exists():
+        raise FileNotFoundError(f"Adapter path does not exist: {path}")
+    if not (path / "adapter_model.safetensors").exists():
+        raise FileNotFoundError(f"No adapter_model.safetensors found in {path}")
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--paper-repo", type=Path, default=Path("../dswgan-paper"))
@@ -257,6 +269,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max-new-tokens", type=int, default=1024)
     parser.add_argument("--temperature", type=float, default=0.7)
     parser.add_argument("--fit-adapter", action="store_true")
+    parser.add_argument("--adapter-path", default=None)
     parser.add_argument("--adapter-output", default=None)
     parser.add_argument("--qlora-epochs", type=float, default=1.0)
     parser.add_argument("--qlora-lr", type=float, default=2e-4)

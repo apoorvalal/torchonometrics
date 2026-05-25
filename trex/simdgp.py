@@ -584,6 +584,7 @@ class SafetensorsLLMInContextGenerator(BaseEstimator):
     ) -> None:
         super().__init__(device=device)
         self.model_path = model_path
+        self.base_model_path = model_path
         self.tokenizer_path = tokenizer_path or model_path
         self.examples = int(examples)
         self.max_new_tokens = int(max_new_tokens)
@@ -602,20 +603,14 @@ class SafetensorsLLMInContextGenerator(BaseEstimator):
         if not hasattr(self, "training_rows"):
             raise RuntimeError("Fit the generator before sampling.")
         try:
-            from transformers import AutoModelForCausalLM, AutoTokenizer
+            from transformers import AutoTokenizer
         except ImportError as exc:
             raise ImportError(
                 "Install transformers and safetensors to use LLM row generation."
             ) from exc
 
         tokenizer = AutoTokenizer.from_pretrained(self.tokenizer_path)
-        model = AutoModelForCausalLM.from_pretrained(
-            self.model_path,
-            torch_dtype=torch.float16 if self.device.type == "cuda" else torch.float32,
-            device_map="auto" if self.device.type == "cuda" else None,
-        )
-        if self.device.type != "cuda":
-            model.to(self.device)
+        model = self._load_model()
 
         rows: list[list[float]] = []
         while len(rows) < n:
@@ -660,6 +655,18 @@ class SafetensorsLLMInContextGenerator(BaseEstimator):
             except ValueError:
                 continue
         return rows
+
+    def _load_model(self) -> Any:
+        from transformers import AutoModelForCausalLM
+
+        model = AutoModelForCausalLM.from_pretrained(
+            self.model_path,
+            torch_dtype=torch.float16 if self.device.type == "cuda" else torch.float32,
+            device_map="auto" if self.device.type == "cuda" else None,
+        )
+        if self.device.type != "cuda":
+            model.to(self.device)
+        return model
 
 
 class SafetensorsQLORAGenerator(SafetensorsLLMInContextGenerator):
@@ -725,7 +732,7 @@ class SafetensorsQLORAGenerator(SafetensorsLLMInContextGenerator):
         trainer.train()
         model.save_pretrained(output_dir, safe_serialization=True)
         tokenizer.save_pretrained(output_dir)
-        self.model_path = output_dir
+        self.adapter_path = output_dir
         self.tokenizer_path = output_dir
         return self
 
@@ -733,6 +740,23 @@ class SafetensorsQLORAGenerator(SafetensorsLLMInContextGenerator):
         header = ",".join(self.column_names)
         values = ",".join(f"{value:.6g}" for value in row)
         return f"Columns: {header}\nRow: {values}"
+
+    def _load_model(self) -> Any:
+        if not hasattr(self, "adapter_path"):
+            return super()._load_model()
+
+        from peft import PeftModel
+        from transformers import AutoModelForCausalLM
+
+        base = AutoModelForCausalLM.from_pretrained(
+            self.base_model_path,
+            torch_dtype=torch.float16 if self.device.type == "cuda" else torch.float32,
+            device_map="auto" if self.device.type == "cuda" else None,
+        )
+        model = PeftModel.from_pretrained(base, self.adapter_path)
+        if self.device.type != "cuda":
+            model.to(self.device)
+        return model
 
 
 class _TextDataset(torch.utils.data.Dataset):
