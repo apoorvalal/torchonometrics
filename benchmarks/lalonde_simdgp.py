@@ -147,8 +147,11 @@ def fit_and_sample(
             examples=args.icl_examples,
             max_new_tokens=args.max_new_tokens,
             temperature=args.temperature,
+            do_sample=not args.llm_greedy,
             load_in_4bit=args.llm_4bit,
             max_attempts=args.llm_max_attempts,
+            rows_per_prompt=args.llm_rows_per_prompt,
+            progress_path=str(args.output_dir / f"{args.dataset}_{method}_progress.csv"),
             device=args.device,
         )
         fit_start = time.perf_counter()
@@ -167,8 +170,11 @@ def fit_and_sample(
             examples=args.icl_examples,
             max_new_tokens=args.max_new_tokens,
             temperature=args.temperature,
+            do_sample=not args.llm_greedy,
             load_in_4bit=args.llm_4bit,
             max_attempts=args.llm_max_attempts,
+            rows_per_prompt=args.llm_rows_per_prompt,
+            progress_path=str(args.output_dir / f"{args.dataset}_{method}_progress.csv"),
             device=args.device,
         )
         fit_start = time.perf_counter()
@@ -274,8 +280,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--icl-examples", type=int, default=32)
     parser.add_argument("--max-new-tokens", type=int, default=1024)
     parser.add_argument("--temperature", type=float, default=0.7)
+    parser.add_argument("--llm-greedy", action="store_true")
     parser.add_argument("--llm-4bit", action="store_true")
     parser.add_argument("--llm-max-attempts", type=int, default=20)
+    parser.add_argument("--llm-rows-per-prompt", type=int, default=None)
     parser.add_argument("--fit-adapter", action="store_true")
     parser.add_argument("--adapter-path", default=None)
     parser.add_argument("--adapter-output", default=None)

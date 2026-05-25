@@ -9,6 +9,7 @@ package import path.
 from __future__ import annotations
 
 from dataclasses import dataclass
+import csv
 from typing import Any, Iterable, Optional
 
 import numpy as np
@@ -580,8 +581,11 @@ class SafetensorsLLMInContextGenerator(BaseEstimator):
         examples: int = 32,
         max_new_tokens: int = 512,
         temperature: float = 0.7,
+        do_sample: bool = True,
         load_in_4bit: bool = False,
         max_attempts: int = 20,
+        rows_per_prompt: Optional[int] = None,
+        progress_path: Optional[str] = None,
         device: Optional[torch.device | str] = None,
     ) -> None:
         super().__init__(device=device)
@@ -591,8 +595,11 @@ class SafetensorsLLMInContextGenerator(BaseEstimator):
         self.examples = int(examples)
         self.max_new_tokens = int(max_new_tokens)
         self.temperature = float(temperature)
+        self.do_sample = bool(do_sample)
         self.load_in_4bit = bool(load_in_4bit)
         self.max_attempts = int(max_attempts)
+        self.rows_per_prompt = None if rows_per_prompt is None else int(rows_per_prompt)
+        self.progress_path = progress_path
 
     def fit(self, X: Any, column_names: Optional[list[str]] = None) -> "SafetensorsLLMInContextGenerator":
         values = np.asarray(X)
@@ -607,7 +614,7 @@ class SafetensorsLLMInContextGenerator(BaseEstimator):
         if not hasattr(self, "training_rows"):
             raise RuntimeError("Fit the generator before sampling.")
         try:
-            from transformers import AutoTokenizer
+            from transformers import AutoTokenizer, StoppingCriteriaList
         except ImportError as exc:
             raise ImportError(
                 "Install transformers and safetensors to use LLM row generation."
@@ -620,23 +627,40 @@ class SafetensorsLLMInContextGenerator(BaseEstimator):
         attempts = 0
         while len(rows) < n and attempts < self.max_attempts:
             attempts += 1
-            prompt = self._prompt(n - len(rows))
+            rows_requested = n - len(rows)
+            if self.rows_per_prompt is not None:
+                rows_requested = min(rows_requested, self.rows_per_prompt)
+            prompt = self._prompt(rows_requested)
             inputs = tokenizer(prompt, return_tensors="pt").to(model.device)
+            start_length = inputs["input_ids"].shape[1]
             output = model.generate(
                 **inputs,
-                do_sample=True,
-                temperature=self.temperature,
+                do_sample=self.do_sample,
                 max_new_tokens=self.max_new_tokens,
                 pad_token_id=tokenizer.eos_token_id,
+                stopping_criteria=StoppingCriteriaList(
+                    [_StopOnStrings(tokenizer, ("<END>",), start_length)]
+                ),
+                **({"temperature": self.temperature} if self.do_sample else {}),
             )
             text = tokenizer.decode(output[0][inputs["input_ids"].shape[1] :], skip_special_tokens=True)
             rows.extend(self._parse_rows(text))
+            self._write_progress(rows[:n], n)
+            print(f"Parsed {min(len(rows), n)} / {n} rows after {attempts} attempts", flush=True)
         if len(rows) < n:
             raise RuntimeError(
                 f"Parsed {len(rows)} valid rows after {attempts} LLM generation attempts; "
                 "increase max_attempts or adjust the prompt/model."
             )
         return np.asarray(rows[:n], dtype=np.float64)
+
+    def _write_progress(self, rows: list[list[float]], n: int) -> None:
+        if self.progress_path is None:
+            return
+        with open(self.progress_path, "w", newline="") as handle:
+            writer = csv.writer(handle)
+            writer.writerow(self.column_names)
+            writer.writerows(rows[:n])
 
     def _prompt(self, rows_requested: int) -> str:
         n_examples = min(self.examples, self.training_rows.shape[0])
@@ -651,10 +675,12 @@ class SafetensorsLLMInContextGenerator(BaseEstimator):
             f"Columns: {header}\n"
             "Examples:\n"
             f"{examples}\n"
-            f"Generate {rows_requested} new rows:\n"
+            f"Generate exactly {rows_requested} new rows.\n"
+            "After the final row, write <END> on its own line.\n"
         )
 
     def _parse_rows(self, text: str) -> list[list[float]]:
+        text = text.split("<END>", 1)[0]
         rows: list[list[float]] = []
         width = len(self.column_names)
         for line in text.splitlines():
@@ -799,6 +825,35 @@ class SafetensorsQLORAGenerator(SafetensorsLLMInContextGenerator):
         if self.device.type != "cuda":
             model.to(self.device)
         return model
+
+
+class _StopOnStrings:
+    def __init__(
+        self,
+        tokenizer: Any,
+        stop_strings: tuple[str, ...],
+        start_length: int,
+    ) -> None:
+        self.stop_token_ids = [
+            tokenizer.encode(stop_string, add_special_tokens=False)
+            for stop_string in stop_strings
+        ]
+        self.start_length = int(start_length)
+
+    def __call__(
+        self,
+        input_ids: torch.LongTensor,
+        scores: Optional[torch.FloatTensor],
+        **kwargs: Any,
+    ) -> bool:
+        generated = input_ids[0, self.start_length :]
+        if generated.numel() == 0:
+            return False
+        generated_ids = generated.tolist()
+        for stop_ids in self.stop_token_ids:
+            if len(generated_ids) >= len(stop_ids) and generated_ids[-len(stop_ids) :] == stop_ids:
+                return True
+        return False
 
 
 class _TextDataset(torch.utils.data.Dataset):
