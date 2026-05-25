@@ -734,10 +734,18 @@ class SafetensorsQLORAGenerator(SafetensorsLLMInContextGenerator):
         num_train_epochs: float = 1.0,
         learning_rate: float = 2e-4,
         per_device_train_batch_size: int = 1,
+        gradient_accumulation_steps: int = 8,
+        rows_per_completion: int = 8,
+        train_samples: Optional[int] = None,
+        max_length: int = 1024,
+        lora_r: int = 16,
+        lora_alpha: int = 32,
+        lora_dropout: float = 0.05,
+        seed: int = 123,
     ) -> "SafetensorsQLORAGenerator":
         try:
             import transformers
-            from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training
+            from peft import LoraConfig, get_peft_model
             from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
         except ImportError as exc:
             raise ImportError(
@@ -750,42 +758,116 @@ class SafetensorsQLORAGenerator(SafetensorsLLMInContextGenerator):
         tokenizer = AutoTokenizer.from_pretrained(self.tokenizer_path)
         if tokenizer.pad_token is None:
             tokenizer.pad_token = tokenizer.eos_token
-        quant_config = BitsAndBytesConfig(load_in_4bit=True, bnb_4bit_compute_dtype=torch.float16)
+        compute_dtype = torch.bfloat16 if self.device.type == "cuda" else torch.float32
+        quant_config = BitsAndBytesConfig(
+            load_in_4bit=True,
+            bnb_4bit_compute_dtype=compute_dtype,
+            bnb_4bit_quant_type="nf4",
+            bnb_4bit_use_double_quant=True,
+        )
         model = AutoModelForCausalLM.from_pretrained(
             self.model_path,
             quantization_config=quant_config,
             device_map="auto",
         )
-        model = prepare_model_for_kbit_training(model)
+        model.config.use_cache = False
+        _prepare_model_for_lora_training(model)
         model = get_peft_model(
             model,
             LoraConfig(
-                r=16,
-                lora_alpha=32,
-                lora_dropout=0.05,
+                r=lora_r,
+                lora_alpha=lora_alpha,
+                lora_dropout=lora_dropout,
                 bias="none",
                 task_type="CAUSAL_LM",
+                target_modules=[
+                    "q_proj",
+                    "k_proj",
+                    "v_proj",
+                    "o_proj",
+                    "gate_proj",
+                    "up_proj",
+                    "down_proj",
+                ],
             ),
         )
 
-        texts = [self._row_training_text(row) for row in self.training_rows]
-        dataset = _TextDataset(texts, tokenizer)
+        examples = self._adapter_training_examples(
+            rows_per_completion=rows_per_completion,
+            train_samples=train_samples,
+            seed=seed,
+        )
+        dataset = _CompletionDataset(examples, tokenizer, max_length=max_length)
         args = transformers.TrainingArguments(
             output_dir=output_dir,
             num_train_epochs=num_train_epochs,
             learning_rate=learning_rate,
             per_device_train_batch_size=per_device_train_batch_size,
+            gradient_accumulation_steps=gradient_accumulation_steps,
             logging_steps=10,
             save_strategy="epoch",
+            optim="paged_adamw_8bit",
+            bf16=self.device.type == "cuda",
+            gradient_checkpointing=True,
+            max_grad_norm=0.3,
+            remove_unused_columns=False,
+            dataloader_pin_memory=False,
             report_to=[],
         )
         trainer = transformers.Trainer(model=model, args=args, train_dataset=dataset)
         trainer.train()
         model.save_pretrained(output_dir, safe_serialization=True)
         tokenizer.save_pretrained(output_dir)
+        del trainer
+        del model
+        if self.device.type == "cuda":
+            torch.cuda.empty_cache()
         self.adapter_path = output_dir
         self.tokenizer_path = output_dir
         return self
+
+    def _adapter_training_examples(
+        self,
+        *,
+        rows_per_completion: int,
+        train_samples: Optional[int],
+        seed: int,
+    ) -> list[tuple[str, str]]:
+        rng = np.random.default_rng(seed)
+        n_rows = self.training_rows.shape[0]
+        n_examples = min(self.examples, n_rows)
+        block = max(1, min(int(rows_per_completion), n_rows))
+        n_samples = int(train_samples) if train_samples is not None else max(128, n_rows)
+        examples: list[tuple[str, str]] = []
+        for _ in range(n_samples):
+            prompt_idx = rng.choice(n_rows, n_examples, replace=False)
+            completion_idx = rng.choice(n_rows, block, replace=block > n_rows)
+            prompt = self._adapter_prompt(prompt_idx, block)
+            completion = self._adapter_completion(completion_idx)
+            examples.append((prompt, completion))
+        return examples
+
+    def _adapter_prompt(self, prompt_idx: np.ndarray, rows_requested: int) -> str:
+        header = ",".join(self.column_names)
+        examples = "\n".join(
+            ",".join(f"{value:.6g}" for value in self.training_rows[i]) for i in prompt_idx
+        )
+        return (
+            "You are generating realistic synthetic rows from an economic dataset.\n"
+            "Return only CSV rows with the same columns and numeric formats.\n"
+            f"Columns: {header}\n"
+            "Examples:\n"
+            f"{examples}\n"
+            f"Generate exactly {rows_requested} new rows.\n"
+            "After the final row, write <END> on its own line.\n"
+        )
+
+    def _adapter_completion(self, completion_idx: np.ndarray) -> str:
+        rows = "\n".join(
+            ",".join(f"{value:.6g}" for value in self.training_rows[i])
+            for i in completion_idx
+        )
+        return f"{rows}\n<END>"
 
     def _row_training_text(self, row: np.ndarray) -> str:
         header = ",".join(self.column_names)
@@ -872,6 +954,59 @@ class _TextDataset(torch.utils.data.Dataset):
 
     def __getitem__(self, idx: int) -> dict[str, torch.Tensor]:
         return {key: value[idx] for key, value in self.examples.items()}
+
+
+class _CompletionDataset(torch.utils.data.Dataset):
+    def __init__(
+        self,
+        examples: list[tuple[str, str]],
+        tokenizer: Any,
+        max_length: int = 1024,
+    ) -> None:
+        self.items: list[dict[str, torch.Tensor]] = []
+        for prompt, completion in examples:
+            prompt_ids = tokenizer(prompt, add_special_tokens=False)["input_ids"]
+            full = tokenizer(
+                prompt + completion,
+                truncation=True,
+                padding="max_length",
+                max_length=max_length,
+                return_tensors="pt",
+            )
+            labels = full["input_ids"].clone()
+            prompt_length = min(len(prompt_ids), labels.shape[1])
+            labels[:, :prompt_length] = -100
+            labels[full["attention_mask"] == 0] = -100
+            self.items.append(
+                {
+                    "input_ids": full["input_ids"][0],
+                    "attention_mask": full["attention_mask"][0],
+                    "labels": labels[0],
+                }
+            )
+
+    def __len__(self) -> int:
+        return len(self.items)
+
+    def __getitem__(self, idx: int) -> dict[str, torch.Tensor]:
+        return self.items[idx]
+
+
+def _prepare_model_for_lora_training(model: Any) -> None:
+    for param in model.parameters():
+        param.requires_grad = False
+    if hasattr(model, "enable_input_require_grads"):
+        model.enable_input_require_grads()
+    else:
+        def make_inputs_require_grad(module: Any, input: Any, output: torch.Tensor) -> None:
+            output.requires_grad_(True)
+
+        model.get_input_embeddings().register_forward_hook(make_inputs_require_grad)
+    if hasattr(model, "gradient_checkpointing_enable"):
+        try:
+            model.gradient_checkpointing_enable(gradient_checkpointing_kwargs={"use_reentrant": False})
+        except TypeError:
+            model.gradient_checkpointing_enable()
 
 
 def distribution_metrics(

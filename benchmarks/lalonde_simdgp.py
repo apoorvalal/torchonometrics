@@ -187,6 +187,14 @@ def fit_and_sample(
                 num_train_epochs=args.qlora_epochs,
                 learning_rate=args.qlora_lr,
                 per_device_train_batch_size=args.qlora_batch_size,
+                gradient_accumulation_steps=args.qlora_grad_accumulation,
+                rows_per_completion=args.qlora_rows_per_completion,
+                train_samples=args.qlora_train_samples,
+                max_length=args.qlora_max_length,
+                lora_r=args.qlora_r,
+                lora_alpha=args.qlora_alpha,
+                lora_dropout=args.qlora_dropout,
+                seed=args.seed,
             )
         elif args.adapter_path is not None:
             _require_adapter_path(args.adapter_path)
@@ -290,6 +298,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--qlora-epochs", type=float, default=1.0)
     parser.add_argument("--qlora-lr", type=float, default=2e-4)
     parser.add_argument("--qlora-batch-size", type=int, default=1)
+    parser.add_argument("--qlora-grad-accumulation", type=int, default=8)
+    parser.add_argument("--qlora-rows-per-completion", type=int, default=8)
+    parser.add_argument("--qlora-train-samples", type=int, default=None)
+    parser.add_argument("--qlora-max-length", type=int, default=1024)
+    parser.add_argument("--qlora-r", type=int, default=16)
+    parser.add_argument("--qlora-alpha", type=int, default=32)
+    parser.add_argument("--qlora-dropout", type=float, default=0.05)
     return parser.parse_args()
 
 
