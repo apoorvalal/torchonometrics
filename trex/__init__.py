@@ -18,6 +18,11 @@ __version__ = "0.1.0"
 from .base import BaseEstimator
 from .linear import LinearRegression
 from .mle import LogisticRegression, PoissonRegression, MaximumLikelihoodEstimator
+from .score_matching import (
+    AntitonicScore,
+    AntitonicScoreMatchingRegression,
+    estimate_antitonic_score,
+)
 from .demean import demean_torch, prepare_fixed_effects
 from .grouped_fe import KNNGroupedFixedEffects, build_panel_embeddings
 from .latent_factor import LatentFactorGLM
@@ -46,6 +51,9 @@ __all__ = [
     "MaximumLikelihoodEstimator",
     "LogisticRegression",
     "PoissonRegression",
+    "AntitonicScore",
+    "AntitonicScoreMatchingRegression",
+    "estimate_antitonic_score",
     "KNNGroupedFixedEffects",
     "build_panel_embeddings",
     "LatentFactorGLM",
