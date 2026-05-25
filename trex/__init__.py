@@ -30,6 +30,15 @@ from .panel import (
     sc_estimate,
     synthdid_estimate,
 )
+from .simdgp import (
+    SafetensorsLLMInContextGenerator,
+    SafetensorsQLORAGenerator,
+    TabularDiffusion,
+    TabularTransformer,
+    TabularWGAN,
+    distribution_metrics,
+    sliced_wasserstein_distance,
+)
 
 __all__ = [
     "BaseEstimator", 
@@ -49,4 +58,11 @@ __all__ = [
     "synthdid_estimate",
     "demean_torch",
     "prepare_fixed_effects",
+    "TabularTransformer",
+    "TabularWGAN",
+    "TabularDiffusion",
+    "SafetensorsLLMInContextGenerator",
+    "SafetensorsQLORAGenerator",
+    "distribution_metrics",
+    "sliced_wasserstein_distance",
 ]
