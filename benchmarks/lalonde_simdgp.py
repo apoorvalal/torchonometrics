@@ -103,6 +103,7 @@ def fit_and_sample(
             max_steps=args.steps,
             critic_steps=args.critic_steps,
             lr=args.lr,
+            optimizer=args.wgan_optimizer,
             gp_weight=args.gp_weight,
             binary_dims=transformer.binary_indices,
             lower_bounds=lower,
@@ -281,6 +282,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--hidden-dims", type=int, nargs="+", default=[128, 128, 128])
     parser.add_argument("--lr", type=float, default=1e-4)
     parser.add_argument("--critic-steps", type=int, default=5)
+    parser.add_argument("--wgan-optimizer", choices=["adam", "optimistic_adam"], default="adam")
     parser.add_argument("--gp-weight", type=float, default=5.0)
     parser.add_argument("--diffusion-timesteps", type=int, default=100)
     parser.add_argument("--llm-model", default=None)

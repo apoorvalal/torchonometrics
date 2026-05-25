@@ -69,6 +69,31 @@ def test_tabular_wgan_tiny_smoke_fit_and_sample():
     assert torch.isfinite(sample).all()
 
 
+def test_tabular_wgan_supports_optimistic_adam():
+    rows = _toy_rows()
+    transformer = TabularTransformer(
+        column_names=["d", "x", "y"],
+        binary_columns=["d"],
+        nonnegative_columns=["y"],
+    ).fit(rows)
+    train = transformer.transform(rows)
+
+    model = TabularWGAN(
+        hidden_dims=(16,),
+        batch_size=16,
+        max_steps=2,
+        critic_steps=1,
+        optimizer="optimistic_adam",
+        seed=1,
+        device="cpu",
+    )
+    model.fit(train)
+    sample = model.sample(7)
+
+    assert sample.shape == (7, rows.shape[1])
+    assert torch.isfinite(sample).all()
+
+
 def test_tabular_diffusion_tiny_smoke_fit_and_sample():
     rows = _toy_rows()
     transformer = TabularTransformer(

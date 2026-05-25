@@ -244,6 +244,89 @@ class _WGANCritic(nn.Module):
         return self.mlp(torch.cat([x, context], dim=1))
 
 
+class _OptimisticAdam(torch.optim.Optimizer):
+    """Adam preconditioned optimistic mirror descent.
+
+    The update uses Adam's bias-corrected first and second moments as the
+    preconditioned game field and applies
+    ``theta <- theta - 2 lr d_t + lr d_{t-1}`` after a vanilla first step.
+    """
+
+    def __init__(
+        self,
+        params: Any,
+        lr: float = 1e-3,
+        betas: tuple[float, float] = (0.9, 0.999),
+        eps: float = 1e-8,
+        weight_decay: float = 0.0,
+    ) -> None:
+        if lr <= 0:
+            raise ValueError("lr must be positive.")
+        if eps <= 0:
+            raise ValueError("eps must be positive.")
+        beta1, beta2 = betas
+        if not 0 <= beta1 < 1 or not 0 <= beta2 < 1:
+            raise ValueError("Adam betas must lie in [0, 1).")
+        defaults = {
+            "lr": lr,
+            "betas": betas,
+            "eps": eps,
+            "weight_decay": weight_decay,
+        }
+        super().__init__(params, defaults)
+
+    @torch.no_grad()
+    def step(self, closure: Optional[Any] = None) -> Optional[torch.Tensor]:
+        loss = None
+        if closure is not None:
+            with torch.enable_grad():
+                loss = closure()
+
+        for group in self.param_groups:
+            lr = group["lr"]
+            beta1, beta2 = group["betas"]
+            eps = group["eps"]
+            weight_decay = group["weight_decay"]
+            for param in group["params"]:
+                if param.grad is None:
+                    continue
+                grad = param.grad
+                if grad.is_sparse:
+                    raise RuntimeError("OptimisticAdam does not support sparse gradients.")
+                if weight_decay != 0:
+                    grad = grad.add(param, alpha=weight_decay)
+
+                state = self.state[param]
+                if not state:
+                    state["step"] = 0
+                    state["exp_avg"] = torch.zeros_like(param)
+                    state["exp_avg_sq"] = torch.zeros_like(param)
+                    state["previous_direction"] = torch.zeros_like(param)
+
+                exp_avg = state["exp_avg"]
+                exp_avg_sq = state["exp_avg_sq"]
+                previous_direction = state["previous_direction"]
+                state["step"] += 1
+                step = state["step"]
+
+                exp_avg.mul_(beta1).add_(grad, alpha=1.0 - beta1)
+                exp_avg_sq.mul_(beta2).addcmul_(grad, grad, value=1.0 - beta2)
+
+                bias_correction1 = 1.0 - beta1**step
+                bias_correction2 = 1.0 - beta2**step
+                denom = exp_avg_sq.sqrt() / bias_correction2**0.5
+                denom.add_(eps)
+                direction = exp_avg.div(bias_correction1).div(denom)
+
+                if step == 1:
+                    param.add_(direction, alpha=-lr)
+                else:
+                    param.add_(direction, alpha=-2.0 * lr)
+                    param.add_(previous_direction, alpha=lr)
+                previous_direction.copy_(direction)
+        return loss
+
+
 class TabularWGAN(BaseEstimator):
     """Wasserstein GAN with gradient penalty for tabular simulation."""
 
@@ -256,6 +339,7 @@ class TabularWGAN(BaseEstimator):
         max_steps: int = 1000,
         critic_steps: int = 5,
         lr: float = 1e-4,
+        optimizer: str = "adam",
         gp_weight: float = 5.0,
         generator_dropout: float = 0.1,
         critic_dropout: float = 0.0,
@@ -275,6 +359,9 @@ class TabularWGAN(BaseEstimator):
         self.max_steps = int(max_steps)
         self.critic_steps = int(critic_steps)
         self.lr = float(lr)
+        if optimizer not in {"adam", "optimistic_adam"}:
+            raise ValueError("optimizer must be 'adam' or 'optimistic_adam'.")
+        self.optimizer = optimizer
         self.gp_weight = float(gp_weight)
         self.generator_dropout = float(generator_dropout)
         self.critic_dropout = float(critic_dropout)
@@ -318,8 +405,8 @@ class TabularWGAN(BaseEstimator):
             shuffle=True,
             drop_last=False,
         )
-        generator_opt = torch.optim.Adam(self.generator.parameters(), lr=self.lr, betas=(0.5, 0.9))
-        critic_opt = torch.optim.Adam(self.critic.parameters(), lr=self.lr, betas=(0.5, 0.9))
+        generator_opt = self._make_optimizer(self.generator.parameters())
+        critic_opt = self._make_optimizer(self.critic.parameters())
 
         data_iter = iter(loader)
         for step in range(self.max_steps):
@@ -405,6 +492,12 @@ class TabularWGAN(BaseEstimator):
             only_inputs=True,
         )[0]
         return F.relu(gradients.norm(2, dim=1) - 1.0).pow(2).mean()
+
+    def _make_optimizer(self, params: Any) -> torch.optim.Optimizer:
+        kwargs = {"lr": self.lr, "betas": (0.5, 0.9)}
+        if self.optimizer == "adam":
+            return torch.optim.Adam(params, **kwargs)
+        return _OptimisticAdam(params, **kwargs)
 
 
 class _TimeEmbedding(nn.Module):
