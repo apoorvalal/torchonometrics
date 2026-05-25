@@ -580,6 +580,8 @@ class SafetensorsLLMInContextGenerator(BaseEstimator):
         examples: int = 32,
         max_new_tokens: int = 512,
         temperature: float = 0.7,
+        load_in_4bit: bool = False,
+        max_attempts: int = 20,
         device: Optional[torch.device | str] = None,
     ) -> None:
         super().__init__(device=device)
@@ -589,6 +591,8 @@ class SafetensorsLLMInContextGenerator(BaseEstimator):
         self.examples = int(examples)
         self.max_new_tokens = int(max_new_tokens)
         self.temperature = float(temperature)
+        self.load_in_4bit = bool(load_in_4bit)
+        self.max_attempts = int(max_attempts)
 
     def fit(self, X: Any, column_names: Optional[list[str]] = None) -> "SafetensorsLLMInContextGenerator":
         values = np.asarray(X)
@@ -613,7 +617,9 @@ class SafetensorsLLMInContextGenerator(BaseEstimator):
         model = self._load_model()
 
         rows: list[list[float]] = []
-        while len(rows) < n:
+        attempts = 0
+        while len(rows) < n and attempts < self.max_attempts:
+            attempts += 1
             prompt = self._prompt(n - len(rows))
             inputs = tokenizer(prompt, return_tensors="pt").to(model.device)
             output = model.generate(
@@ -625,6 +631,11 @@ class SafetensorsLLMInContextGenerator(BaseEstimator):
             )
             text = tokenizer.decode(output[0][inputs["input_ids"].shape[1] :], skip_special_tokens=True)
             rows.extend(self._parse_rows(text))
+        if len(rows) < n:
+            raise RuntimeError(
+                f"Parsed {len(rows)} valid rows after {attempts} LLM generation attempts; "
+                "increase max_attempts or adjust the prompt/model."
+            )
         return np.asarray(rows[:n], dtype=np.float64)
 
     def _prompt(self, rows_requested: int) -> str:
@@ -657,13 +668,27 @@ class SafetensorsLLMInContextGenerator(BaseEstimator):
         return rows
 
     def _load_model(self) -> Any:
-        from transformers import AutoModelForCausalLM
+        from transformers import AutoModelForCausalLM, AutoModelForImageTextToText
 
-        model = AutoModelForCausalLM.from_pretrained(
-            self.model_path,
-            torch_dtype=torch.float16 if self.device.type == "cuda" else torch.float32,
-            device_map="auto" if self.device.type == "cuda" else None,
-        )
+        load_kwargs = {
+            "torch_dtype": torch.float16 if self.device.type == "cuda" else torch.float32,
+            "device_map": "auto" if self.device.type == "cuda" else None,
+        }
+        if self.load_in_4bit:
+            from transformers import BitsAndBytesConfig
+
+            load_kwargs["quantization_config"] = BitsAndBytesConfig(
+                load_in_4bit=True,
+                bnb_4bit_compute_dtype=torch.float16,
+            )
+            load_kwargs.pop("torch_dtype", None)
+        try:
+            model = AutoModelForCausalLM.from_pretrained(self.model_path, **load_kwargs)
+        except ValueError:
+            model = AutoModelForImageTextToText.from_pretrained(
+                self.model_path,
+                **load_kwargs,
+            )
         if self.device.type != "cuda":
             model.to(self.device)
         return model
@@ -746,13 +771,30 @@ class SafetensorsQLORAGenerator(SafetensorsLLMInContextGenerator):
             return super()._load_model()
 
         from peft import PeftModel
-        from transformers import AutoModelForCausalLM
+        from transformers import AutoModelForCausalLM, AutoModelForImageTextToText
 
-        base = AutoModelForCausalLM.from_pretrained(
-            self.base_model_path,
-            torch_dtype=torch.float16 if self.device.type == "cuda" else torch.float32,
-            device_map="auto" if self.device.type == "cuda" else None,
-        )
+        load_kwargs = {
+            "torch_dtype": torch.float16 if self.device.type == "cuda" else torch.float32,
+            "device_map": "auto" if self.device.type == "cuda" else None,
+        }
+        if self.load_in_4bit:
+            from transformers import BitsAndBytesConfig
+
+            load_kwargs["quantization_config"] = BitsAndBytesConfig(
+                load_in_4bit=True,
+                bnb_4bit_compute_dtype=torch.float16,
+            )
+            load_kwargs.pop("torch_dtype", None)
+        try:
+            base = AutoModelForCausalLM.from_pretrained(
+                self.base_model_path,
+                **load_kwargs,
+            )
+        except ValueError:
+            base = AutoModelForImageTextToText.from_pretrained(
+                self.base_model_path,
+                **load_kwargs,
+            )
         model = PeftModel.from_pretrained(base, self.adapter_path)
         if self.device.type != "cuda":
             model.to(self.device)

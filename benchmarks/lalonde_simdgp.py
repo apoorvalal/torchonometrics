@@ -147,6 +147,8 @@ def fit_and_sample(
             examples=args.icl_examples,
             max_new_tokens=args.max_new_tokens,
             temperature=args.temperature,
+            load_in_4bit=args.llm_4bit,
+            max_attempts=args.llm_max_attempts,
             device=args.device,
         )
         fit_start = time.perf_counter()
@@ -165,6 +167,8 @@ def fit_and_sample(
             examples=args.icl_examples,
             max_new_tokens=args.max_new_tokens,
             temperature=args.temperature,
+            load_in_4bit=args.llm_4bit,
+            max_attempts=args.llm_max_attempts,
             device=args.device,
         )
         fit_start = time.perf_counter()
@@ -227,6 +231,8 @@ def _require_safetensors_model(model_path: str | None) -> None:
         raise ValueError("--llm-model is required for LLM methods.")
     path = Path(model_path)
     if not path.exists():
+        if "/" in model_path and not model_path.startswith(("/", ".")):
+            return
         raise FileNotFoundError(f"Model path does not exist: {path}")
     if path.is_dir() and not list(path.glob("*.safetensors")):
         raise FileNotFoundError(f"No safetensors weights found in {path}")
@@ -268,6 +274,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--icl-examples", type=int, default=32)
     parser.add_argument("--max-new-tokens", type=int, default=1024)
     parser.add_argument("--temperature", type=float, default=0.7)
+    parser.add_argument("--llm-4bit", action="store_true")
+    parser.add_argument("--llm-max-attempts", type=int, default=20)
     parser.add_argument("--fit-adapter", action="store_true")
     parser.add_argument("--adapter-path", default=None)
     parser.add_argument("--adapter-output", default=None)
