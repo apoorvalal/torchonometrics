@@ -31,6 +31,7 @@ from .panel import (
     synthdid_estimate,
 )
 from .simdgp import (
+    CompletionEndpointLLMInContextGenerator,
     SafetensorsLLMInContextGenerator,
     SafetensorsQLORAGenerator,
     TabularDiffusion,
@@ -61,6 +62,7 @@ __all__ = [
     "TabularTransformer",
     "TabularWGAN",
     "TabularDiffusion",
+    "CompletionEndpointLLMInContextGenerator",
     "SafetensorsLLMInContextGenerator",
     "SafetensorsQLORAGenerator",
     "distribution_metrics",

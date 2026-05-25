@@ -10,7 +10,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import csv
+import json
 from typing import Any, Iterable, Optional
+from urllib.error import HTTPError, URLError
+from urllib.request import Request, urlopen
 
 import numpy as np
 import torch
@@ -907,6 +910,160 @@ class SafetensorsQLORAGenerator(SafetensorsLLMInContextGenerator):
         if self.device.type != "cuda":
             model.to(self.device)
         return model
+
+
+class CompletionEndpointLLMInContextGenerator(SafetensorsLLMInContextGenerator):
+    """Generate tabular rows through a llama.cpp-compatible completion endpoint."""
+
+    def __init__(
+        self,
+        endpoint_url: str = "http://127.0.0.1:8080/completion",
+        model: Optional[str] = None,
+        examples: int = 32,
+        max_new_tokens: int = 512,
+        temperature: float = 0.7,
+        do_sample: bool = True,
+        max_attempts: int = 20,
+        rows_per_prompt: Optional[int] = None,
+        progress_path: Optional[str] = None,
+        timeout: float = 300.0,
+        prompt_prefix: str = "",
+        prompt_style: str = "plain",
+        device: Optional[torch.device | str] = None,
+    ) -> None:
+        super().__init__(
+            model_path=endpoint_url,
+            examples=examples,
+            max_new_tokens=max_new_tokens,
+            temperature=temperature,
+            do_sample=do_sample,
+            max_attempts=max_attempts,
+            rows_per_prompt=rows_per_prompt,
+            progress_path=progress_path,
+            device=device,
+        )
+        self.endpoint_url = endpoint_url
+        self.model = model
+        self.timeout = float(timeout)
+        self.prompt_prefix = prompt_prefix
+        if prompt_style not in {"plain", "gpt-oss"}:
+            raise ValueError("prompt_style must be 'plain' or 'gpt-oss'.")
+        self.prompt_style = prompt_style
+
+    def sample(self, n: int) -> np.ndarray:
+        if not hasattr(self, "training_rows"):
+            raise RuntimeError("Fit the generator before sampling.")
+
+        rows: list[list[float]] = []
+        attempts = 0
+        while len(rows) < n and attempts < self.max_attempts:
+            attempts += 1
+            rows_requested = n - len(rows)
+            if self.rows_per_prompt is not None:
+                rows_requested = min(rows_requested, self.rows_per_prompt)
+            prompt = self._prompt(rows_requested)
+            text = self._complete(prompt)
+            rows.extend(self._parse_rows(text))
+            self._write_progress(rows[:n], n)
+            print(f"Parsed {min(len(rows), n)} / {n} rows after {attempts} attempts", flush=True)
+        if len(rows) < n:
+            raise RuntimeError(
+                f"Parsed {len(rows)} valid rows after {attempts} endpoint completion attempts; "
+                "increase max_attempts or adjust the prompt/model."
+            )
+        return np.asarray(rows[:n], dtype=np.float64)
+
+    def _prompt(self, rows_requested: int) -> str:
+        n_examples = min(self.examples, self.training_rows.shape[0])
+        idx = np.random.choice(self.training_rows.shape[0], n_examples, replace=False)
+        header = ",".join(self.column_names)
+        examples = "\n".join(
+            ",".join(f"{value:.6g}" for value in self.training_rows[i]) for i in idx
+        )
+        if self.prompt_style == "gpt-oss":
+            user_message = (
+                f"Return only {rows_requested} numeric CSV rows. No prose.\n"
+                f"Columns: {header}\n"
+                "Examples:\n"
+                f"{examples}\n"
+                "CSV:\n"
+            )
+            return (
+                "<|start|>system<|message|>"
+                "You are a CSV generator. No reasoning. No prose."
+                "<|end|><|start|>user<|message|>"
+                f"{user_message}"
+                "<|end|><|start|>assistant<|channel|>final<|message|>"
+            )
+        return (
+            f"{self.prompt_prefix}"
+            "You are a CSV generator for an economic dataset.\n"
+            "Output only numeric CSV rows. Do not explain, analyze, number the rows, or use markdown.\n"
+            f"Columns: {header}\n"
+            "Examples:\n"
+            f"{examples}\n"
+            f"Generate exactly {rows_requested} new rows.\n"
+            "After the final row, write <END> on its own line.\n"
+            "CSV:\n"
+        )
+
+    def _complete(self, prompt: str) -> str:
+        payload = self._completion_payload(prompt)
+        data = json.dumps(payload).encode("utf-8")
+        request = Request(
+            self.endpoint_url,
+            data=data,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        try:
+            with urlopen(request, timeout=self.timeout) as response:
+                body = response.read().decode("utf-8")
+        except HTTPError as exc:
+            detail = exc.read().decode("utf-8", errors="replace")
+            raise RuntimeError(f"Completion endpoint returned HTTP {exc.code}: {detail}") from exc
+        except URLError as exc:
+            raise RuntimeError(f"Could not reach completion endpoint {self.endpoint_url}: {exc}") from exc
+        return self._completion_text(json.loads(body))
+
+    def _completion_payload(self, prompt: str) -> dict[str, Any]:
+        temperature = self.temperature if self.do_sample else 0.0
+        stop = [] if self.prompt_style == "gpt-oss" else ["<END>"]
+        if "/v1/completions" in self.endpoint_url:
+            payload: dict[str, Any] = {
+                "prompt": prompt,
+                "max_tokens": self.max_new_tokens,
+                "temperature": temperature,
+                "stop": stop,
+                "stream": False,
+            }
+            if self.model is not None:
+                payload["model"] = self.model
+            return payload
+        return {
+            "prompt": prompt,
+            "n_predict": self.max_new_tokens,
+            "temperature": temperature,
+            "stop": stop,
+            "stream": False,
+            "cache_prompt": False,
+        }
+
+    def _completion_text(self, response: dict[str, Any]) -> str:
+        if "content" in response:
+            return str(response["content"])
+        choices = response.get("choices")
+        if isinstance(choices, list) and choices:
+            first = choices[0]
+            if isinstance(first, dict):
+                if "text" in first:
+                    return str(first["text"])
+                message = first.get("message")
+                if isinstance(message, dict) and "content" in message:
+                    return str(message["content"])
+        if "response" in response:
+            return str(response["response"])
+        raise RuntimeError(f"Completion endpoint response did not include generated text: {response}")
 
 
 class _StopOnStrings:
