@@ -1,0 +1,890 @@
+---
+title: "From Jensen--Shannon GANs to Wasserstein and Parallel Tempering"
+subtitle: "Objectives, geometry, and an eight-mode Gaussian experiment"
+date: 2026-08-05
+bibliography: ptgan_convergence.bib
+jupyter: python3
+format:
+  html:
+    theme: cosmo
+    toc: true
+    toc-depth: 3
+    number-sections: true
+    code-fold: true
+    code-summary: "Show computation"
+    embed-resources: true
+    html-math-method: mathjax
+    page-layout: full
+    link-external-newwindow: true
+execute:
+  warning: false
+  message: false
+fig-align: center
+fig-cap-location: bottom
+---
+
+## The short answer
+
+Yes: the original GAN objective is exactly a Jensen--Shannon-divergence
+objective **after the discriminator has been optimized over all measurable
+functions**. That qualification matters. In practical training, the
+discriminator is a finite neural network, it is not optimized to completion,
+and the commonly used non-saturating generator loss is not literally the
+original minimax/Jensen--Shannon objective.
+
+A Wasserstein GAN changes the discrepancy. It replaces binary classification
+between real and generated observations with the Kantorovich--Rubinstein dual
+of the earth-mover distance. This yields informative gradients even when the
+real and generated distributions have disjoint supports, provided the critic
+is constrained to be 1-Lipschitz.
+
+The parallelly tempered GAN (PTGAN) of @sohn2025 keeps the adversarial
+framework but changes the *path of distributions learned during training*.
+Instead of learning only the target law $P_X$, one shared conditional generator
+learns the family
+
+$$
+Q^\alpha = \alpha X_1 + (1-\alpha)X_2,
+\qquad X_1,X_2\stackrel{\mathrm{iid}}{\sim}P_X,
+\qquad \alpha\in[0,1].
+$$
+
+Interior temperatures average independent target draws and place probability
+between separated modes. A coherency penalty then couples critic learning
+across temperatures. The method is called "parallel tempering," but it is not
+the Markov-chain Monte Carlo algorithm: there are no chains, swaps, or
+Metropolis corrections. It is simultaneous conditional GAN training along a
+convex distribution path.
+
+## Common setup
+
+Let $(\mathcal X,\|\cdot\|)$ be the sample space, $P$ the data distribution,
+$Z\sim P_Z$ a reference variable, and $G_\theta:\mathcal Z\to\mathcal X$ a
+generator. The induced model distribution is the pushforward
+
+$$
+P_\theta = (G_\theta)_\#P_Z,
+\qquad
+P_\theta(A)=P_Z\{z:G_\theta(z)\in A\}.
+$$
+
+Training is difficult because we ordinarily cannot evaluate a density
+$p_\theta(x)$: we can sample $G_\theta(Z)$, but the neural transformation need
+not be invertible. A GAN estimates a discrepancy between $P$ and $P_\theta$
+using a second network and differentiates that estimated discrepancy through
+$G_\theta$.
+
+## Traditional GAN: classification and Jensen--Shannon divergence
+
+### The minimax game
+
+The original GAN of @goodfellow2014 uses a discriminator
+$D_\phi:\mathcal X\to(0,1)$ and solves
+
+$$
+\min_\theta\max_\phi V(\phi,\theta),
+\qquad
+V(\phi,\theta)
+=\mathbb E_{X\sim P}\log D_\phi(X)
++\mathbb E_{Z\sim P_Z}\log\{1-D_\phi(G_\theta(Z))\}.
+$$
+
+For equal prior probabilities of "real" and "fake," $D_\phi(x)$ is a
+probabilistic classifier for the label real. Suppose $P$ and $P_\theta$ have
+densities $p$ and $q$ with respect to a common dominating measure $\mu$. For a
+fixed generator, the discriminator objective separates pointwise:
+
+$$
+V(D,q)=\int
+\left[p(x)\log D(x)+q(x)\log\{1-D(x)\}\right]d\mu(x).
+$$
+
+At a point where $p(x)+q(x)>0$, differentiate the integrand with respect to
+$d=D(x)$:
+
+$$
+\frac{\partial}{\partial d}
+\{p\log d+q\log(1-d)\}
+=\frac{p}{d}-\frac{q}{1-d}.
+$$
+
+The first-order condition is $p(1-d)=qd$, so
+
+$$
+D^*(x)=\frac{p(x)}{p(x)+q(x)}.
+$$
+
+The second derivative,
+$-p/d^2-q/(1-d)^2$, is nonpositive, hence this is the pointwise maximum.
+Define the mixture $M=(P+P_\theta)/2$, with density $m=(p+q)/2$. Substitution
+gives
+
+$$
+\begin{aligned}
+V(D^*,q)
+&=\int p\log\frac{p}{p+q}\,d\mu
+  +\int q\log\frac{q}{p+q}\,d\mu\\
+&=\int p\log\frac{p}{2m}\,d\mu
+  +\int q\log\frac{q}{2m}\,d\mu\\
+&=\operatorname{KL}(P\|M)+\operatorname{KL}(P_\theta\|M)-2\log 2\\
+&=2\operatorname{JS}(P\|P_\theta)-\log 4,
+\end{aligned}
+$$
+
+where
+
+$$
+\operatorname{JS}(P\|Q)
+=\frac12\operatorname{KL}\!\left(P\middle\|\frac{P+Q}{2}\right)
++\frac12\operatorname{KL}\!\left(Q\middle\|\frac{P+Q}{2}\right).
+$$
+
+Thus an unrestricted, fully optimized discriminator converts the generator's
+minimax problem into minimizing Jensen--Shannon divergence. The global optimum
+is $P_\theta=P$, at which $D^*(x)=1/2$ and $V=-\log4$.
+
+### Why the qualification matters
+
+The equality above is a population identity for $D^*$. Alternating stochastic
+gradient updates with a finite $D_\phi$ do not optimize $D$ over all measurable
+functions. Moreover, practitioners usually replace the minimax generator loss
+
+$$
+\mathcal L_G^{\mathrm{minimax}}(\theta)
+=\mathbb E_Z\log\{1-D_\phi(G_\theta(Z))\}
+$$
+
+with the non-saturating loss
+
+$$
+\mathcal L_G^{\mathrm{NS}}(\theta)
+=-\mathbb E_Z\log D_\phi(G_\theta(Z)).
+$$
+
+They have the same desired equilibrium but different gradients. If
+$D=\sigma(a)$ and a generated point is confidently rejected, then $a\ll0$.
+The logit derivative of the minimax loss is
+
+$$
+\frac{\partial}{\partial a}\log(1-\sigma(a))=-\sigma(a)\approx0,
+$$
+
+whereas the non-saturating derivative is
+
+$$
+\frac{\partial}{\partial a}\{-\log\sigma(a)\}
+=-(1-\sigma(a))\approx-1.
+$$
+
+The second loss therefore sends a usable signal to a poor generator, but its
+finite-critic training dynamics should not be described as direct numerical
+minimization of Jensen--Shannon divergence.
+
+### The support-mismatch pathology
+
+Let $P=\delta_0$ and $P_\theta=\delta_\theta$. For every $\theta\ne0$, the two
+supports are disjoint and
+
+$$
+\operatorname{JS}(\delta_0\|\delta_\theta)=\log2.
+$$
+
+It jumps to zero only at $\theta=0$. The perfect discriminator assigns 1 to
+the real point and 0 to the generated point; the divergence is locally flat in
+$\theta$ almost everywhere. This idealized example captures a high-dimensional
+problem: data and generator distributions can lie on thin, initially disjoint
+manifolds, allowing classification to become perfect before the generator has
+learned how to move toward the data.
+
+## Wasserstein GAN: transport rather than classification
+
+### Primal and dual distances
+
+For probability measures with finite first moments, the Wasserstein-1 distance
+is
+
+$$
+W_1(P,Q)
+=\inf_{\gamma\in\Pi(P,Q)}
+\mathbb E_{(X,Y)\sim\gamma}\|X-Y\|,
+$$
+
+where $\Pi(P,Q)$ is the set of all couplings with marginals $P$ and $Q$.
+The primal asks for the cheapest joint transportation plan. The
+Kantorovich--Rubinstein dual is
+
+$$
+W_1(P,Q)
+=\sup_{\|f\|_{\mathrm{Lip}}\le1}
+\left\{\mathbb E_P f(X)-\mathbb E_Q f(Y)\right\},
+$$
+
+where
+
+$$
+\|f\|_{\mathrm{Lip}}
+=\sup_{x\ne y}\frac{|f(x)-f(y)|}{\|x-y\|}.
+$$
+
+The WGAN critic $f_\phi:\mathcal X\to\mathbb R$ produces an unrestricted real
+score rather than a class probability. Its population game is
+
+$$
+\min_\theta\max_{\phi:\|f_\phi\|_{\mathrm{Lip}}\le1}
+\left[\mathbb E_P f_\phi(X)
+-\mathbb E_Z f_\phi(G_\theta(Z))\right].
+$$
+
+The Dirac example now has
+
+$$
+W_1(\delta_0,\delta_\theta)=|\theta|,
+$$
+
+which changes continuously with the generator location and has derivative
+$\operatorname{sign}(\theta)$ away from zero. That is the central geometric
+advantage over the saturated Jensen--Shannon value.
+
+### Enforcing the Lipschitz constraint
+
+The original WGAN clipped network weights [@arjovsky2017wgan]. WGAN-GP instead
+penalizes critic gradients at interpolated real--fake points
+[@gulrajani2017]:
+
+$$
+\widehat H_{\mathrm{GP}}(\phi)
+=\frac1b\sum_{i=1}^b
+\left(\|\nabla_x f_\phi(\widehat x_i)\|_2-1\right)^2,
+$$
+
+$$
+\widehat x_i=\epsilon_i x_i+(1-\epsilon_i)\widetilde x_i,
+\qquad \epsilon_i\sim\operatorname{Unif}(0,1),
+\qquad \widetilde x_i=G_\theta(z_i).
+$$
+
+Trex's benchmark uses the one-sided version
+
+$$
+\widehat H_{\mathrm{GP}}^+
+=\frac1b\sum_i
+\left[\max\{\|\nabla_xf_\phi(\widehat x_i)\|_2-1,0\}\right]^2,
+$$
+
+so gradients smaller than one are not penalized. In minimization convention,
+the Trex critic and generator losses are
+
+$$
+\widehat{\mathcal L}_D
+=\frac1b\sum_i f_\phi(\widetilde x_i)
+-\frac1b\sum_i f_\phi(x_i)
++\lambda_{\mathrm{GP}}\widehat H_{\mathrm{GP}}^+,
+$$
+
+$$
+\widehat{\mathcal L}_G
+=-\frac1b\sum_i f_\phi(G_\theta(z_i)).
+$$
+
+Wasserstein geometry fixes the particular support-mismatch problem, but it
+does not turn the adversarial game into convex optimization. A finite critic,
+stochastic gradients, uneven progress across modes, and generator capacity can
+still produce oscillation or mode collapse. The gradient penalty controls
+local slopes on real--fake segments; it does not explicitly coordinate the
+critic's learning across different levels of multimodality.
+
+## PTGAN: learn a convex path of target laws
+
+### The tempered distribution
+
+PTGAN begins with two independent target draws and defines
+
+$$
+Q^\alpha=\alpha X_1+(1-\alpha)X_2.
+$$
+
+For $0<\alpha<1$, if $P$ has a density $p$ on $\mathbb R^d$, the density of
+$Q^\alpha$ is the scaled convolution
+
+$$
+p_\alpha(q)
+=\int_{\mathbb R^d}
+p(x)\,(1-\alpha)^{-d}
+p\!\left(\frac{q-\alpha x}{1-\alpha}\right)dx.
+$$
+
+Equivalently, its characteristic function is
+
+$$
+\varphi_{Q^\alpha}(t)
+=\varphi_X(\alpha t)\varphi_X((1-\alpha)t).
+$$
+
+If $\mathbb E X=\mu$ and $\operatorname{Var}(X)=\Sigma$, independence implies
+
+$$
+\mathbb E Q^\alpha=\mu,
+\qquad
+\operatorname{Var}(Q^\alpha)
+=\{\alpha^2+(1-\alpha)^2\}\Sigma.
+$$
+
+The variance multiplier is minimized at $\alpha=1/2$, where it equals $1/2$.
+Also,
+
+$$
+Q^\alpha\overset d=Q^{1-\alpha},
+$$
+
+because swapping $X_1$ and $X_2$ leaves their joint law unchanged.
+
+For a $K$-component Gaussian mixture
+
+$$
+P_X=\sum_{k=1}^K\pi_k\mathcal N(\mu_k,\Sigma_k),
+$$
+
+the tempered law is available exactly:
+
+$$
+P_{Q^\alpha}
+=\sum_{k=1}^K\sum_{\ell=1}^K
+\pi_k\pi_\ell\,
+\mathcal N\!\left(
+\alpha\mu_k+(1-\alpha)\mu_\ell,
+\alpha^2\Sigma_k+(1-\alpha)^2\Sigma_\ell
+\right).
+$$
+
+The $K^2$ component means include points on segments between the original
+centers. Thus convex tempering does more than add independent noise: it creates
+bridges between modes while averaging within-component noise.
+
+```{python}
+#| label: fig-tempered-mixture
+#| fig-cap: "Convex tempering of the eight-mode target. Interior temperatures fill the gaps between the original Gaussian components."
+#| echo: false
+from pathlib import Path
+
+import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
+import torch
+from scipy import stats
+
+plt.style.use("seaborn-v0_8-whitegrid")
+COLORS = {"PTGAN-CP": "#0072B2", "PTGAN-GP": "#E69F00", "WGAN-GP": "#009E73"}
+
+repo_data = Path("nb/data")
+DATA = repo_data if repo_data.exists() else Path("data")
+
+def gaussian_ring(seed, n, n_modes=8, radius=1.5, component_sd=0.1):
+    rng = np.random.default_rng(seed)
+    angles = 2 * np.pi * np.arange(n_modes) / n_modes
+    centers = radius * np.column_stack([np.cos(angles), np.sin(angles)])
+    labels = rng.integers(0, n_modes, size=n)
+    x = centers[labels] + rng.normal(scale=component_sd, size=(n, 2))
+    return x.astype(np.float32), centers
+
+x1, centers = gaussian_ring(100, 6000)
+x2, _ = gaussian_ring(101, 6000)
+alphas = [1.0, 0.8, 0.6, 0.5]
+fig, axes = plt.subplots(1, len(alphas), figsize=(12, 3.1), sharex=True, sharey=True)
+for ax, alpha in zip(axes, alphas):
+    q = alpha * x1 + (1 - alpha) * x2
+    ax.scatter(q[:, 0], q[:, 1], s=2, alpha=0.18, color="#0072B2", rasterized=True)
+    ax.set_title(rf"$\alpha={alpha:.1f}$")
+    ax.set_aspect("equal")
+    ax.set_xlim(-1.9, 1.9)
+    ax.set_ylim(-1.9, 1.9)
+    ax.set_xlabel("$x_1$")
+axes[0].set_ylabel("$x_2$")
+fig.tight_layout()
+plt.show()
+```
+
+### Joint objective and temperature sampling
+
+One shared generator and critic learn the joint law of $(Q^\alpha,\alpha)$.
+The paper samples
+
+$$
+\alpha\sim p_\alpha
+=r\delta_1+(1-r)\operatorname{Unif}(0,1).
+$$
+
+The point mass $r$ ensures frequent direct training on the target slice
+$\alpha=1$; the uniform part supplies smoother bridge distributions. The
+symmetry $Q^\alpha\overset d=Q^{1-\alpha}$ is imposed through
+
+$$
+t(\alpha)=1-2|\alpha-1/2|\in[0,1],
+\qquad t(\alpha)=t(1-\alpha).
+$$
+
+Writing $G_\theta(z,t)$ and $D_\phi(q,t)$, the Wasserstein-style joint
+objective is
+
+$$
+\min_\theta\max_\phi
+\mathcal L(\phi,\theta)
+=\mathbb E_{\alpha,X_1,X_2}
+D_\phi(Q^\alpha,t(\alpha))
+-\mathbb E_{\alpha,Z}
+D_\phi(G_\theta(Z, t(\alpha)),t(\alpha)).
+$$
+
+In the implementation, real and fake terms in a minibatch share the same
+$\alpha$. This common-random-number coupling leaves each expectation unbiased
+and reduces irrelevant Monte Carlo differences between temperature mixtures.
+
+The paper also recommends reference interpolation
+
+$$
+Z^\alpha=\alpha Z_1+(1-\alpha)Z_2,
+\qquad Z_1,Z_2\stackrel{\mathrm{iid}}{\sim}P_Z,
+$$
+
+so the reference path has the same algebraic structure as the target path.
+Trex uses $G_\theta(Z^\alpha,t(\alpha))$. At inference, setting $\alpha=1$
+gives $Z^1=Z_1$ and requests the original target distribution.
+
+### Why parallel training alone is not enough
+
+Sharing parameters across temperatures does not force progress at one
+temperature to agree with progress at another. Let $\alpha_1\sim p_\alpha$,
+$\alpha_2\sim\operatorname{Unif}(0,1)$, and use the same pair $(X_1,X_2)$ to
+construct
+
+$$
+q_1=\alpha_1X_1+(1-\alpha_1)X_2,
+\qquad
+q_2=\alpha_2X_1+(1-\alpha_2)X_2.
+$$
+
+For $\nu\sim\operatorname{Unif}(0,1)$, define
+
+$$
+\widetilde q=\nu q_1+(1-\nu)q_2,
+\qquad
+\widetilde\alpha=\nu\alpha_1+(1-\nu)\alpha_2.
+$$
+
+The desired heuristic is $D(q_1,t(\alpha_1))\approx
+D(q_2,t(\alpha_2))$. Set $q(s)=sq_1+(1-s)q_2$ and
+$\alpha(s)=s\alpha_1+(1-s)\alpha_2$. Away from the cusp of $t$ at $1/2$, the
+complete path derivative includes both a spatial term and a temperature term:
+
+$$
+\frac{dD}{ds}
+=\nabla_qD^\top(q_1-q_2)
++\frac{\partial D}{\partial t}\,
+t'(\alpha(s))(\alpha_1-\alpha_2).
+$$
+
+If one instead connects the transformed endpoints linearly, the second factor
+is $t(\alpha_1)-t(\alpha_2)$. PTGAN deliberately regularizes only the spatial
+term. Its coherency penalty is
+
+$$
+H(\phi)
+=\lambda\,
+\mathbb E\left[
+\left\{
+\nabla_qD_\phi(\widetilde q,t(\widetilde\alpha))^\top
+(q_1-q_2)
+\right\}^2
+\right].
+$$
+
+This is a heuristic first-order synchronization penalty, not an exact equality
+constraint. Its weighting has a useful identity:
+
+$$
+q_1-q_2=(\alpha_1-\alpha_2)(X_1-X_2).
+$$
+
+Pairs from distant modes therefore receive a larger squared directional
+penalty, as do temperatures farther apart. In the minimization convention used
+by Trex, the PTGAN updates are
+
+$$
+\widehat{\mathcal L}_D
+=\frac1b\sum_iD_\phi(g_i,t_i)
+-\frac1b\sum_iD_\phi(q_{1i},t_i)
++\lambda\widehat H,
+$$
+
+$$
+\widehat{\mathcal L}_G
+=-\frac1b\sum_iD_\phi(G_\theta(z_i^{\alpha_i},t_i),t_i),
+$$
+
+where $g_i=G_\theta(z_i^{\alpha_i},t_i)$. The paper default is
+$\lambda=100$ with one critic update per generator update. The full PTGAN
+benchmark uses the coherency penalty and no WGAN gradient penalty, so its
+effect is not confounded with GP. Consequently, this finite-network critic uses
+the Wasserstein sign convention but is not guaranteed to be 1-Lipschitz; its
+critic value should not be read as a certified numerical value of $W_1$.
+
+### What the convergence argument does and does not say
+
+The paper's mechanism is a bias--variance trade-off. Interior temperatures do
+not have the same critic gradient expectation as the target slice, so $r<1$
+introduces bias for the immediate $\alpha=1$ update. But smoother, better
+connected intermediate distributions can reduce the stochastic critic-gradient
+variance. Under the two-sided Polyak--Łojasiewicz conditions studied by
+@yang2020, a class of nonconvex--nonconcave minimax algorithms has an
+optimization error of order
+
+$$
+O\!\left(\frac{\sigma_{\mathrm{grad}}^2}{T}\right),
+$$
+
+so a smaller variance constant can mean faster local optimization. This is not
+a proof that arbitrary neural GAN training satisfies the PL assumptions. Nor
+does PTGAN improve the global statistical order: the paper retains an
+$n^{-1/2}$-type minimax estimation rate, with somewhat different constants and
+approximation terms. The proposed gain is primarily stabilization against bad
+local dynamics and mode collapse.
+
+## Numerical experiment: eight Gaussian modes
+
+### Data-generating process
+
+The target follows the paper's toy geometry:
+
+$$
+X\sim\frac18\sum_{k=0}^7
+\mathcal N(\mu_k,0.01I_2),
+\qquad
+\mu_k=1.5
+\begin{pmatrix}
+\cos(2\pi k/8)\\
+\sin(2\pi k/8)
+\end{pmatrix}.
+$$
+
+Each of 10 paired replications uses 4,000 training observations and a separate
+4,000-observation evaluation sample. All methods receive the same target data,
+seed, batch size 100, 1,500 critic/generator updates, two hidden layers of 64
+ReLU units, latent dimension 2, Adam learning rate $10^{-4}$, and Adam
+coefficients $(\beta_1,\beta_2)=(0,0.9)$. There is one critic update per
+generator update and no dropout.
+
+The compared methods are:
+
+1. **WGAN-GP:** the ordinary target only, with one-sided GP weight 10.
+2. **PTGAN-GP:** convex tempering with $r=0.9$, but no coherency penalty;
+   ordinary GP weight 10 is retained. This isolates whether interpolation alone
+   suffices.
+3. **PTGAN-CP:** the full proposal with $r=0.9$, coherency weight 100, and no
+   ordinary GP.
+
+### Evaluation metrics
+
+Every checkpoint evaluates the generated distribution at $\alpha=1$.
+
+For $L=256$ random unit directions $u_\ell$, sliced Wasserstein distance is
+
+$$
+\operatorname{SW}_{256}(P,Q)
+=\frac1{256}\sum_{\ell=1}^{256}
+W_1(u_\ell^\top X,u_\ell^\top Y).
+$$
+
+With equal empirical sample sizes $m=4{,}000$, each one-dimensional term is
+computed exactly from order statistics:
+
+$$
+\widehat W_1
+=\frac1m\sum_{j=1}^m
+\left|x_{(j)}-y_{(j)}\right|.
+$$
+
+A generated point is assigned to its nearest true center. A mode counts as
+captured if at least $\max\{5,0.005m\}=20$ generated points lie within
+$3\sigma=0.3$ of that center. If $\widehat\pi_k$ is the nearest-center share,
+mode-mass total variation is
+
+$$
+\operatorname{TV}_{\mathrm{mode}}
+=\frac12\sum_{k=1}^8
+\left|\widehat\pi_k-\frac18\right|.
+$$
+
+Lower sliced Wasserstein and total variation are better; higher mode coverage
+is better.
+
+```{python}
+#| label: tbl-final-results
+#| tbl-cap: "Final checkpoint over 10 replications. Parentheses contain between-seed standard deviations."
+#| echo: false
+summary = pd.read_csv(DATA / "ptgan_multimodal_summary.csv")
+draws = pd.read_csv(DATA / "ptgan_multimodal_draws.csv")
+method_order = ["PTGAN-CP", "PTGAN-GP", "WGAN-GP"]
+
+final = summary.query("step == 1500").set_index("method").loc[method_order]
+full_coverage = (
+    draws.query("step == 1500")
+    .assign(full=lambda d: d["mode_coverage"].eq(8))
+    .groupby("method")["full"]
+    .sum()
+)
+
+def mean_sd(row, metric, digits=3):
+    return f"{row[f'{metric}_mean']:.{digits}f} ({row[f'{metric}_sd']:.{digits}f})"
+
+final_table = pd.DataFrame(
+    {
+        "Sliced W1": [mean_sd(final.loc[m], "sliced_wasserstein") for m in method_order],
+        "Modes / 8": [mean_sd(final.loc[m], "mode_coverage", 2) for m in method_order],
+        "Mode TV": [mean_sd(final.loc[m], "mode_tv") for m in method_order],
+        "Full coverage": [f"{int(full_coverage[m])}/10" for m in method_order],
+        "Train seconds": [mean_sd(final.loc[m], "elapsed_sec") for m in method_order],
+    },
+    index=method_order,
+)
+final_table.index.name = "Method"
+final_table
+```
+
+```{python}
+#| label: fig-convergence
+#| fig-cap: "Equal-update convergence at the target temperature. Lines are means and bands are plus or minus one between-seed standard deviation."
+#| echo: false
+metrics = [
+    ("sliced_wasserstein", "Sliced Wasserstein", None),
+    ("mode_coverage", "Modes covered", (0, 8.25)),
+    ("mode_tv", "Mode-mass total variation", None),
+]
+fig, axes = plt.subplots(1, 3, figsize=(13, 3.8))
+for method in method_order:
+    selected = summary[summary.method.eq(method)].sort_values("step")
+    x = selected.step.to_numpy()
+    for ax, (metric, title, ylim) in zip(axes, metrics):
+        mean = selected[f"{metric}_mean"].to_numpy()
+        sd = selected[f"{metric}_sd"].to_numpy()
+        ax.plot(x, mean, marker="o", linewidth=2, label=method, color=COLORS[method])
+        ax.fill_between(x, mean - sd, mean + sd, color=COLORS[method], alpha=0.14)
+        ax.set_title(title)
+        ax.set_xlabel("Training step")
+        if ylim is not None:
+            ax.set_ylim(*ylim)
+axes[0].legend(frameon=False)
+fig.tight_layout()
+plt.show()
+```
+
+The divergence appears after roughly 400 updates. By step 1,200, full PTGAN
+has mean sliced Wasserstein 0.265 and covers 7.7 modes; WGAN-GP is at 0.739 and
+2.4 modes. At step 1,500, full PTGAN recovers all eight modes in every seed.
+WGAN-GP does so in one seed, while tempered training with ordinary GP does so
+in none. Relative to WGAN-GP, the full method reduces final sliced Wasserstein
+by about 73% and mode-mass total variation by about 88%.
+
+```{python}
+#| label: paired-comparison
+#| echo: false
+from IPython.display import Markdown, display
+
+final_draws = draws.query("step == 1500").pivot(
+    index="seed", columns="method", values="sliced_wasserstein"
+)
+paired_diff = final_draws["PTGAN-CP"] - final_draws["WGAN-GP"]
+test = stats.ttest_rel(final_draws["PTGAN-CP"], final_draws["WGAN-GP"])
+ci = stats.t.interval(
+    0.95,
+    len(paired_diff) - 1,
+    loc=paired_diff.mean(),
+    scale=stats.sem(paired_diff),
+)
+display(
+    Markdown(
+        f"The paired PTGAN-minus-WGAN sliced-Wasserstein difference is "
+        f"**{paired_diff.mean():.3f}**, with a 95% t interval "
+        f"**[{ci[0]:.3f}, {ci[1]:.3f}]** and paired "
+        f"$p={test.pvalue:.5f}$. This is a small simulation comparison, not a "
+        f"general performance guarantee."
+    )
+)
+```
+
+### What a representative run looks like
+
+```{python}
+#| label: fig-final-samples
+#| fig-cap: "Generated samples after 1,500 updates for seed 0. The full coherency-penalized PTGAN covers the ring; the two alternatives collapse."
+#| echo: false
+from trex import TabularPTGAN, TabularWGAN
+
+train, centers = gaussian_ring(10_000, 4000)
+real_eval, _ = gaussian_ring(20_000, 4000)
+common = dict(
+    hidden_dims=(64, 64),
+    critic_hidden_dims=(64, 64),
+    noise_dim=2,
+    batch_size=100,
+    max_steps=1500,
+    critic_steps=1,
+    lr=1e-4,
+    betas=(0.0, 0.9),
+    generator_dropout=0.0,
+    critic_dropout=0.0,
+    seed=0,
+    device="cpu",
+)
+models = {
+    "WGAN-GP": TabularWGAN(gp_weight=10.0, **common),
+    "PTGAN-GP": TabularPTGAN(
+        temperature_ratio=0.9,
+        coherency_weight=0.0,
+        gp_weight=10.0,
+        interpolate_noise=True,
+        **common,
+    ),
+    "PTGAN-CP": TabularPTGAN(
+        temperature_ratio=0.9,
+        coherency_weight=100.0,
+        gp_weight=0.0,
+        interpolate_noise=True,
+        **common,
+    ),
+}
+
+samples = {}
+for name, model in models.items():
+    model.fit(train)
+    with torch.random.fork_rng(devices=[]):
+        torch.manual_seed(1500)
+        samples[name] = model.sample(4000).numpy()
+
+fig, axes = plt.subplots(1, 4, figsize=(12.5, 3.2), sharex=True, sharey=True)
+panels = [("Target", real_eval), *[(name, samples[name]) for name in method_order]]
+for ax, (name, values) in zip(axes, panels):
+    color = "#4D4D4D" if name == "Target" else COLORS[name]
+    ax.scatter(values[:, 0], values[:, 1], s=2, alpha=0.2, color=color, rasterized=True)
+    ax.scatter(centers[:, 0], centers[:, 1], s=16, marker="x", color="black")
+    ax.set_title(name)
+    ax.set_aspect("equal")
+    ax.set_xlim(-2.0, 2.0)
+    ax.set_ylim(-2.0, 2.0)
+    ax.set_xlabel("$x_1$")
+axes[0].set_ylabel("$x_2$")
+fig.tight_layout()
+plt.show()
+```
+
+The PTGAN-GP ablation is decisive for interpretation. It has the same convex
+temperature path and interpolated reference noise as full PTGAN but lacks the
+coherency penalty; it fails similarly to WGAN-GP. The result therefore does
+not support the claim that data interpolation by itself solves mode collapse.
+For this architecture and target, cross-temperature critic synchronization is
+the operative ingredient.
+
+### Wall-clock convergence
+
+The methods receive equal numbers of critic and generator updates, but the
+regularizers have different costs. At 1,500 updates, mean training-only CPU
+times are 1.092 seconds for PTGAN-CP, 1.260 for WGAN-GP, and 1.318 for
+PTGAN-GP on this machine. Evaluations are excluded from those timings. The
+absolute values are not portable; the useful observation is that the
+directional coherency penalty is not more expensive than the gradient-norm
+penalty in this small network.
+
+## Edge case: one Gaussian
+
+The paper warns that ordinary training may be more efficient when the target
+is already simple. We repeat the design for
+$X\sim\mathcal N(0,0.01I_2)$, using 10 seeds and 1,000 updates.
+
+```{python}
+#| label: tbl-unimodal
+#| tbl-cap: "Unimodal edge case at 1,000 updates."
+#| echo: false
+uni = pd.read_csv(DATA / "ptgan_unimodal_summary.csv")
+uni_final = uni.query("step == 1000").set_index("method").loc[["PTGAN-CP", "WGAN-GP"]]
+uni_table = pd.DataFrame(
+    {
+        "Sliced W1": [mean_sd(uni_final.loc[m], "sliced_wasserstein", 4) for m in ["PTGAN-CP", "WGAN-GP"]],
+        "Nearest-center distance": [mean_sd(uni_final.loc[m], "nearest_mode_distance", 4) for m in ["PTGAN-CP", "WGAN-GP"]],
+        "Train seconds": [mean_sd(uni_final.loc[m], "elapsed_sec", 3) for m in ["PTGAN-CP", "WGAN-GP"]],
+    },
+    index=["PTGAN-CP", "WGAN-GP"],
+)
+uni_table.index.name = "Method"
+uni_table
+```
+
+Both methods converge. PTGAN's final sliced distance is 0.0147 versus 0.0194
+for WGAN-GP, an absolute difference of only 0.0047. Mode coverage is
+uninformative here because there is only one mode and both generators place
+enough mass near it even at initialization. This edge case does not reproduce
+a vanilla-WGAN speed advantage, but it does show that PTGAN's dramatic
+multimodal benefit mostly disappears when there is no mode-collapse problem.
+
+## Implementation in Trex
+
+The public estimator is `trex.TabularPTGAN`. Its paper-specific defaults are
+one critic step, Adam betas $(0,0.9)$, coherency weight 100, symmetric
+temperature input, and interpolated reference noise. The default
+`temperature_ratio=0.5` follows the paper's tabular experiments; the harder
+Gaussian-ring benchmark above uses $r=0.9$.
+
+```python
+from trex import TabularPTGAN
+
+model = TabularPTGAN(
+    hidden_dims=(128, 128, 128),
+    max_steps=2_000,
+    temperature_ratio=0.5,
+    coherency_weight=100.0,
+    interpolate_noise=True,
+    seed=0,
+)
+model.fit(x_train)
+x_synthetic = model.sample(5_000, alpha=1.0)
+```
+
+The exact benchmark is reproducible with:
+
+```bash
+python benchmarks/ptgan_convergence.py \
+  --steps 1500 \
+  --checkpoints 0,50,100,200,400,800,1200,1500 \
+  --seeds 10 \
+  --n-train 4000 \
+  --n-eval 4000 \
+  --hidden-dims 64 64 \
+  --batch-size 100 \
+  --temperature-ratio 0.9 \
+  --coherency-weight 100 \
+  --include-ablation \
+  --output-dir tmp/ptgan-convergence-main
+```
+
+## Bottom line
+
+The three methods change different mathematical objects:
+
+- **Traditional GAN:** a real-versus-fake classification game; under an ideal
+  discriminator, the original minimax value is $2\operatorname{JS}-\log4$.
+- **WGAN:** an integral probability metric over 1-Lipschitz critics, equal to
+  Wasserstein-1 distance at the population optimum.
+- **PTGAN:** a joint conditional GAN over a convex family of target laws, plus
+  a directional coherency penalty that transfers progress across temperatures.
+
+On the eight-mode toy problem, WGAN geometry alone is not enough for this small
+network and training budget. Full PTGAN reaches all modes in all ten runs; both
+the WGAN baseline and tempering-without-coherency ablation usually collapse.
+That is strong evidence for the local optimization mechanism in the setting it
+was designed for. It is not yet evidence that PTGAN dominates on mixed tabular
+data or on downstream econometric estimands. The next useful test is therefore
+not a larger toy GAN: it is a paired benchmark on the Lalonde/CPS simulator in
+which distributional metrics and bias in target causal estimands are tracked
+jointly.
+
+## References
+
+::: {#refs}
+:::
