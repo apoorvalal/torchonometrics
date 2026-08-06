@@ -21,6 +21,7 @@ from .mle import LogisticRegression, PoissonRegression, MaximumLikelihoodEstimat
 from .demean import demean_torch, prepare_fixed_effects
 from .grouped_fe import KNNGroupedFixedEffects, build_panel_embeddings
 from .latent_factor import LatentFactorGLM
+from .cmr import MaximumMomentRestriction, SieveMinimumDistance
 from .panel import (
     NuclearNormMatrixCompletion,
     SyntheticDID,
@@ -32,7 +33,7 @@ from .panel import (
 )
 
 __all__ = [
-    "BaseEstimator", 
+    "BaseEstimator",
     "LinearRegression",
     "MaximumLikelihoodEstimator",
     "LogisticRegression",
@@ -40,6 +41,8 @@ __all__ = [
     "KNNGroupedFixedEffects",
     "build_panel_embeddings",
     "LatentFactorGLM",
+    "MaximumMomentRestriction",
+    "SieveMinimumDistance",
     "NuclearNormMatrixCompletion",
     "SyntheticDID",
     "did_estimate",

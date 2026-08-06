@@ -88,6 +88,31 @@ gmm.fit(instruments, outcome, endogenous_vars, two_step=True)
 print(gmm.summary())
 ```
 
+### Conditional Moment Restrictions
+
+```python
+import torch
+from trex import MaximumMomentRestriction
+
+# NPIV-style residual moment E[f(T) - Y | Z] = 0
+model = torch.nn.Sequential(
+    torch.nn.Linear(1, 32),
+    torch.nn.Tanh(),
+    torch.nn.Linear(32, 1),
+)
+
+def residual_moment(prediction, y):
+    return prediction - y
+
+cmr = MaximumMomentRestriction(
+    model=model,
+    moment_function=residual_moment,
+    maxiter=100,
+)
+cmr.fit(treatment, outcome, instruments)
+print(cmr.params["mmr_loss"])
+```
+
 ### Maximum Likelihood Estimation
 
 ```python
