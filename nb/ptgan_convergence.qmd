@@ -23,12 +23,13 @@ fig-align: center
 fig-cap-location: bottom
 ---
 
-## The short answer
+## Overview
 
-Yes: the original GAN objective is exactly a Jensen--Shannon-divergence
-objective **after the discriminator has been optimized over all measurable
-functions**. That qualification matters. In practical training, the
-discriminator is a finite neural network, it is not optimized to completion,
+The original generative adversarial network admits an exact population
+characterization in terms of Jensen--Shannon divergence: after optimizing the
+discriminator over all measurable functions, its minimax value is
+$2\operatorname{JS}(P,P_\theta)-\log 4$. This identity does not extend
+unchanged to practical alternating optimization with a finite discriminator,
 and the commonly used non-saturating generator loss is not literally the
 original minimax/Jensen--Shannon objective.
 
@@ -863,7 +864,7 @@ python benchmarks/ptgan_convergence.py \
   --output-dir tmp/ptgan-convergence-main
 ```
 
-## Bottom line
+## Comparison and implications
 
 The three methods change different mathematical objects:
 
@@ -879,10 +880,9 @@ network and training budget. Full PTGAN reaches all modes in all ten runs; both
 the WGAN baseline and tempering-without-coherency ablation usually collapse.
 That is strong evidence for the local optimization mechanism in the setting it
 was designed for. It is not yet evidence that PTGAN dominates on mixed tabular
-data or on downstream econometric estimands. The next useful test is therefore
-not a larger toy GAN: it is a paired benchmark on the Lalonde/CPS simulator in
-which distributional metrics and bias in target causal estimands are tracked
-jointly.
+data or on downstream econometric estimands. External validity should be
+assessed on paired tabular benchmarks, such as the Lalonde/CPS simulator, while
+tracking both distributional metrics and bias in target causal estimands.
 
 ## References
 
