@@ -8,9 +8,9 @@ package import path.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 import csv
-from typing import Any, Iterable, Optional
+from dataclasses import dataclass
+from typing import Any, Callable, Iterable, Optional
 
 import numpy as np
 import torch
@@ -54,7 +54,9 @@ def _column_indices(
     for item in selected:
         if isinstance(item, str):
             if columns is None:
-                raise ValueError("Column names are required for string column selectors.")
+                raise ValueError(
+                    "Column names are required for string column selectors."
+                )
             result.append(columns.index(item))
         else:
             result.append(int(item))
@@ -211,12 +213,30 @@ class _WGANGenerator(nn.Module):
         else:
             self.upper_bounds = None
 
-    def forward(self, context: Optional[torch.Tensor] = None, n: Optional[int] = None) -> torch.Tensor:
+    def forward(
+        self,
+        context: Optional[torch.Tensor] = None,
+        n: Optional[int] = None,
+        noise: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
+        if noise is not None:
+            if noise.ndim != 2 or noise.shape[1] != self.noise_dim:
+                raise ValueError("Noise must have shape (n, noise_dim).")
+            if context is None:
+                context = torch.zeros(
+                    noise.shape[0],
+                    0,
+                    device=noise.device,
+                    dtype=noise.dtype,
+                )
         if context is None:
             if n is None:
                 raise ValueError("Pass either context or n.")
             context = torch.zeros(n, 0, device=next(self.parameters()).device)
-        noise = torch.randn(context.shape[0], self.noise_dim, device=context.device)
+        if noise is None:
+            noise = torch.randn(context.shape[0], self.noise_dim, device=context.device)
+        elif noise.shape[0] != context.shape[0]:
+            raise ValueError("Noise and context must have the same number of rows.")
         output = self.mlp(torch.cat([noise, context], dim=1))
         if self.binary_dims:
             output[:, self.binary_dims] = torch.sigmoid(output[:, self.binary_dims])
@@ -238,7 +258,9 @@ class _WGANCritic(nn.Module):
         super().__init__()
         self.mlp = _MLP(input_dim + context_dim, 1, hidden_dims, dropout)
 
-    def forward(self, x: torch.Tensor, context: Optional[torch.Tensor] = None) -> torch.Tensor:
+    def forward(
+        self, x: torch.Tensor, context: Optional[torch.Tensor] = None
+    ) -> torch.Tensor:
         if context is None:
             context = torch.zeros(x.shape[0], 0, device=x.device, dtype=x.dtype)
         return self.mlp(torch.cat([x, context], dim=1))
@@ -292,7 +314,9 @@ class _OptimisticAdam(torch.optim.Optimizer):
                     continue
                 grad = param.grad
                 if grad.is_sparse:
-                    raise RuntimeError("OptimisticAdam does not support sparse gradients.")
+                    raise RuntimeError(
+                        "OptimisticAdam does not support sparse gradients."
+                    )
                 if weight_decay != 0:
                     grad = grad.add(param, alpha=weight_decay)
 
@@ -339,6 +363,7 @@ class TabularWGAN(BaseEstimator):
         max_steps: int = 1000,
         critic_steps: int = 5,
         lr: float = 1e-4,
+        betas: tuple[float, float] = (0.5, 0.9),
         optimizer: str = "adam",
         gp_weight: float = 5.0,
         generator_dropout: float = 0.1,
@@ -352,13 +377,16 @@ class TabularWGAN(BaseEstimator):
         super().__init__(device=device)
         self.hidden_dims = tuple(hidden_dims)
         self.critic_hidden_dims = (
-            tuple(critic_hidden_dims) if critic_hidden_dims is not None else tuple(reversed(hidden_dims))
+            tuple(critic_hidden_dims)
+            if critic_hidden_dims is not None
+            else tuple(reversed(hidden_dims))
         )
         self.noise_dim = noise_dim
         self.batch_size = int(batch_size)
         self.max_steps = int(max_steps)
         self.critic_steps = int(critic_steps)
         self.lr = float(lr)
+        self.betas = tuple(float(beta) for beta in betas)
         if optimizer not in {"adam", "optimistic_adam"}:
             raise ValueError("optimizer must be 'adam' or 'optimistic_adam'.")
         self.optimizer = optimizer
@@ -371,7 +399,12 @@ class TabularWGAN(BaseEstimator):
         self.seed = seed
         self.history: dict[str, list[float]] = {"critic_loss": [], "generator_loss": []}
 
-    def fit(self, X: Any, context: Optional[Any] = None) -> "TabularWGAN":
+    def fit(
+        self,
+        X: Any,
+        context: Optional[Any] = None,
+        callback: Optional[Callable[[int, "TabularWGAN"], None]] = None,
+    ) -> "TabularWGAN":
         if self.seed is not None:
             torch.manual_seed(self.seed)
         x = _as_2d_tensor(X, self.device)
@@ -408,6 +441,9 @@ class TabularWGAN(BaseEstimator):
         generator_opt = self._make_optimizer(self.generator.parameters())
         critic_opt = self._make_optimizer(self.critic.parameters())
 
+        self.history = {"critic_loss": [], "generator_loss": []}
+        if callback is not None:
+            callback(0, self)
         data_iter = iter(loader)
         for step in range(self.max_steps):
             for _ in range(self.critic_steps):
@@ -439,13 +475,17 @@ class TabularWGAN(BaseEstimator):
 
             self.history["critic_loss"].append(float(critic_loss.detach().cpu()))
             self.history["generator_loss"].append(float(generator_loss.detach().cpu()))
+            if callback is not None:
+                callback(step + 1, self)
 
         self.params = {
             "generator_state": {
-                name: value.detach().cpu() for name, value in self.generator.state_dict().items()
+                name: value.detach().cpu()
+                for name, value in self.generator.state_dict().items()
             },
             "critic_state": {
-                name: value.detach().cpu() for name, value in self.critic.state_dict().items()
+                name: value.detach().cpu()
+                for name, value in self.critic.state_dict().items()
             },
         }
         return self
@@ -453,10 +493,13 @@ class TabularWGAN(BaseEstimator):
     def sample(self, n: int, context: Optional[Any] = None) -> torch.Tensor:
         if not hasattr(self, "generator"):
             raise RuntimeError("TabularWGAN must be fitted before sampling.")
+        was_training = self.generator.training
         self.generator.eval()
         with torch.no_grad():
             c = self._context_tensor(context, n)
-            return self.generator(c, n=n).detach().cpu()
+            sample = self.generator(c, n=n).detach().cpu()
+        self.generator.train(was_training)
+        return sample
 
     def _context_tensor(self, context: Optional[Any], n: int) -> torch.Tensor:
         if context is None:
@@ -494,7 +537,337 @@ class TabularWGAN(BaseEstimator):
         return F.relu(gradients.norm(2, dim=1) - 1.0).pow(2).mean()
 
     def _make_optimizer(self, params: Any) -> torch.optim.Optimizer:
-        kwargs = {"lr": self.lr, "betas": (0.5, 0.9)}
+        kwargs = {"lr": self.lr, "betas": self.betas}
+        if self.optimizer == "adam":
+            return torch.optim.Adam(params, **kwargs)
+        return _OptimisticAdam(params, **kwargs)
+
+
+class TabularPTGAN(BaseEstimator):
+    """Parallelly tempered Wasserstein GAN for multimodal tabular data.
+
+    This implements Algorithm 3 of Sohn and Song (2025), arXiv:2411.11786v2.
+    At each step it learns the joint family of convexly tempered targets
+    ``alpha * X_1 + (1 - alpha) * X_2`` and applies their coherency penalty to
+    synchronize the critic across temperatures. Sampling at ``alpha=1``
+    returns draws from the original target distribution.
+
+    Parameters are mostly shared with :class:`TabularWGAN`. The PTGAN-specific
+    parameters are ``temperature_ratio`` (the point mass on ``alpha=1``),
+    ``coherency_weight``, and ``interpolate_noise``.
+    """
+
+    def __init__(
+        self,
+        hidden_dims: tuple[int, ...] = (128, 128, 128),
+        critic_hidden_dims: Optional[tuple[int, ...]] = None,
+        noise_dim: Optional[int] = None,
+        batch_size: int = 128,
+        max_steps: int = 1000,
+        critic_steps: int = 1,
+        lr: float = 1e-4,
+        betas: tuple[float, float] = (0.0, 0.9),
+        optimizer: str = "adam",
+        temperature_ratio: float = 0.5,
+        coherency_weight: float = 100.0,
+        gp_weight: float = 0.0,
+        interpolate_noise: bool = True,
+        generator_dropout: float = 0.1,
+        critic_dropout: float = 0.0,
+        binary_dims: Iterable[int] = (),
+        lower_bounds: Optional[Any] = None,
+        upper_bounds: Optional[Any] = None,
+        seed: Optional[int] = None,
+        device: Optional[torch.device | str] = None,
+    ) -> None:
+        super().__init__(device=device)
+        if not 0.0 <= temperature_ratio <= 1.0:
+            raise ValueError("temperature_ratio must lie in [0, 1].")
+        if coherency_weight < 0 or gp_weight < 0:
+            raise ValueError("Penalty weights must be nonnegative.")
+        if optimizer not in {"adam", "optimistic_adam"}:
+            raise ValueError("optimizer must be 'adam' or 'optimistic_adam'.")
+        self.hidden_dims = tuple(hidden_dims)
+        self.critic_hidden_dims = (
+            tuple(critic_hidden_dims)
+            if critic_hidden_dims is not None
+            else tuple(reversed(hidden_dims))
+        )
+        self.noise_dim = noise_dim
+        self.batch_size = int(batch_size)
+        self.max_steps = int(max_steps)
+        self.critic_steps = int(critic_steps)
+        self.lr = float(lr)
+        self.betas = tuple(float(beta) for beta in betas)
+        self.optimizer = optimizer
+        self.temperature_ratio = float(temperature_ratio)
+        self.coherency_weight = float(coherency_weight)
+        self.gp_weight = float(gp_weight)
+        self.interpolate_noise = bool(interpolate_noise)
+        self.generator_dropout = float(generator_dropout)
+        self.critic_dropout = float(critic_dropout)
+        self.binary_dims = tuple(int(j) for j in binary_dims)
+        self.lower_bounds = lower_bounds
+        self.upper_bounds = upper_bounds
+        self.seed = seed
+        self.history: dict[str, list[float]] = {
+            "critic_loss": [],
+            "generator_loss": [],
+            "coherency_penalty": [],
+            "gradient_penalty": [],
+            "critic_grad_norm": [],
+        }
+
+    def fit(
+        self,
+        X: Any,
+        context: Optional[Any] = None,
+        callback: Optional[Callable[[int, "TabularPTGAN"], None]] = None,
+    ) -> "TabularPTGAN":
+        if self.seed is not None:
+            torch.manual_seed(self.seed)
+        x = _as_2d_tensor(X, self.device)
+        c = self._context_tensor(context, x.shape[0])
+        input_dim = x.shape[1]
+        context_dim = c.shape[1]
+        self.noise_dim_ = int(self.noise_dim or input_dim)
+        lower = self._bound_tensor(self.lower_bounds, input_dim)
+        upper = self._bound_tensor(self.upper_bounds, input_dim)
+
+        # One extra conditioning coordinate is the paper's symmetric
+        # temperature transform t(alpha) = 1 - 2 |alpha - 1/2|.
+        self.generator = _WGANGenerator(
+            self.noise_dim_,
+            context_dim + 1,
+            input_dim,
+            self.hidden_dims,
+            self.generator_dropout,
+            lower,
+            upper,
+            self.binary_dims,
+        ).to(self.device)
+        self.critic = _WGANCritic(
+            input_dim,
+            context_dim + 1,
+            self.critic_hidden_dims,
+            self.critic_dropout,
+        ).to(self.device)
+        generator_opt = self._make_optimizer(self.generator.parameters())
+        critic_opt = self._make_optimizer(self.critic.parameters())
+        self.history = {key: [] for key in self.history}
+
+        if callback is not None:
+            callback(0, self)
+        batch_size = min(self.batch_size, x.shape[0])
+        for step in range(self.max_steps):
+            for _ in range(self.critic_steps):
+                x1, c1 = self._draw_rows(x, c, batch_size)
+                x2, c2 = self._draw_rows(x, c, batch_size)
+                alpha1 = self._draw_training_alpha(batch_size)
+                alpha2 = torch.rand(batch_size, 1, device=self.device)
+                nu = torch.rand(batch_size, 1, device=self.device)
+
+                q1 = alpha1 * x1 + (1.0 - alpha1) * x2
+                q2 = alpha2 * x1 + (1.0 - alpha2) * x2
+                q_context1 = alpha1 * c1 + (1.0 - alpha1) * c2
+                q_context2 = alpha2 * c1 + (1.0 - alpha2) * c2
+                q_tilde = (nu * q1 + (1.0 - nu) * q2).requires_grad_(True)
+                alpha_tilde = nu * alpha1 + (1.0 - nu) * alpha2
+                context_tilde = nu * q_context1 + (1.0 - nu) * q_context2
+
+                network_context = self._network_context(q_context1, alpha1)
+                fake_noise = self._reference_noise(batch_size, alpha1)
+                fake_x = self.generator(
+                    network_context,
+                    noise=fake_noise,
+                ).detach()
+                real_score = self.critic(q1, network_context).mean()
+                fake_score = self.critic(fake_x, network_context).mean()
+
+                coherency_penalty = self._coherency_penalty(
+                    q_tilde,
+                    q1 - q2,
+                    context_tilde,
+                    alpha_tilde,
+                )
+                if self.gp_weight > 0:
+                    gradient_penalty = self._gradient_penalty(
+                        q1,
+                        fake_x,
+                        network_context,
+                    )
+                else:
+                    gradient_penalty = torch.zeros((), device=self.device)
+                critic_loss = (
+                    fake_score
+                    - real_score
+                    + self.coherency_weight * coherency_penalty
+                    + self.gp_weight * gradient_penalty
+                )
+                critic_opt.zero_grad()
+                critic_loss.backward()
+                critic_grad_norm = self._gradient_norm(self.critic.parameters())
+                critic_opt.step()
+
+            fake_x = self.generator(network_context, noise=fake_noise)
+            generator_loss = -self.critic(fake_x, network_context).mean()
+            generator_opt.zero_grad()
+            generator_loss.backward()
+            generator_opt.step()
+
+            self.history["critic_loss"].append(float(critic_loss.detach().cpu()))
+            self.history["generator_loss"].append(float(generator_loss.detach().cpu()))
+            self.history["coherency_penalty"].append(
+                float(coherency_penalty.detach().cpu())
+            )
+            self.history["gradient_penalty"].append(
+                float(gradient_penalty.detach().cpu())
+            )
+            self.history["critic_grad_norm"].append(critic_grad_norm)
+            if callback is not None:
+                callback(step + 1, self)
+
+        self.params = {
+            "generator_state": {
+                name: value.detach().cpu()
+                for name, value in self.generator.state_dict().items()
+            },
+            "critic_state": {
+                name: value.detach().cpu()
+                for name, value in self.critic.state_dict().items()
+            },
+        }
+        return self
+
+    def sample(
+        self,
+        n: int,
+        context: Optional[Any] = None,
+        alpha: Any = 1.0,
+    ) -> torch.Tensor:
+        """Draw rows at a requested temperature; ``alpha=1`` is the data law."""
+        if not hasattr(self, "generator"):
+            raise RuntimeError("TabularPTGAN must be fitted before sampling.")
+        c = self._context_tensor(context, n)
+        alpha_tensor = self._alpha_tensor(alpha, n)
+        network_context = self._network_context(c, alpha_tensor)
+        noise = self._reference_noise(n, alpha_tensor)
+        was_training = self.generator.training
+        self.generator.eval()
+        with torch.no_grad():
+            sample = self.generator(network_context, noise=noise).detach().cpu()
+        self.generator.train(was_training)
+        return sample
+
+    @staticmethod
+    def _temperature_feature(alpha: torch.Tensor) -> torch.Tensor:
+        return 1.0 - 2.0 * torch.abs(alpha - 0.5)
+
+    def _network_context(
+        self,
+        context: torch.Tensor,
+        alpha: torch.Tensor,
+    ) -> torch.Tensor:
+        return torch.cat([context, self._temperature_feature(alpha)], dim=1)
+
+    def _draw_training_alpha(self, n: int) -> torch.Tensor:
+        uniform = torch.rand(n, 1, device=self.device)
+        original = torch.rand(n, 1, device=self.device) < self.temperature_ratio
+        return torch.where(original, torch.ones_like(uniform), uniform)
+
+    def _alpha_tensor(self, alpha: Any, n: int) -> torch.Tensor:
+        value = _as_tensor(alpha, self.device).reshape(-1, 1)
+        if value.shape[0] == 1:
+            value = value.expand(n, 1)
+        if value.shape[0] != n:
+            raise ValueError("alpha must be scalar or have one value per sample.")
+        if torch.any((value < 0) | (value > 1)):
+            raise ValueError("alpha must lie in [0, 1].")
+        return value
+
+    def _reference_noise(self, n: int, alpha: torch.Tensor) -> torch.Tensor:
+        z1 = torch.randn(n, self.noise_dim_, device=self.device)
+        if not self.interpolate_noise:
+            return z1
+        z2 = torch.randn(n, self.noise_dim_, device=self.device)
+        return alpha * z1 + (1.0 - alpha) * z2
+
+    def _context_tensor(self, context: Optional[Any], n: int) -> torch.Tensor:
+        if context is None:
+            return torch.zeros(n, 0, device=self.device)
+        c = _as_2d_tensor(context, self.device)
+        if c.shape[0] != n:
+            raise ValueError("Context rows must match X rows or requested sample size.")
+        return c
+
+    def _bound_tensor(self, bound: Optional[Any], dim: int) -> Optional[torch.Tensor]:
+        if bound is None:
+            return None
+        tensor = _as_tensor(bound, self.device)
+        if tensor.numel() != dim:
+            raise ValueError("Bounds must have one value per generated column.")
+        return tensor.reshape(1, dim)
+
+    def _draw_rows(
+        self,
+        x: torch.Tensor,
+        context: torch.Tensor,
+        n: int,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        indices = torch.randint(x.shape[0], (n,), device=self.device)
+        return x[indices], context[indices]
+
+    def _coherency_penalty(
+        self,
+        q_tilde: torch.Tensor,
+        q_difference: torch.Tensor,
+        context_tilde: torch.Tensor,
+        alpha_tilde: torch.Tensor,
+    ) -> torch.Tensor:
+        score = self.critic(
+            q_tilde,
+            self._network_context(context_tilde, alpha_tilde),
+        )
+        gradient = torch.autograd.grad(
+            outputs=score,
+            inputs=q_tilde,
+            grad_outputs=torch.ones_like(score),
+            create_graph=True,
+            retain_graph=True,
+            only_inputs=True,
+        )[0]
+        directional_derivative = (gradient * q_difference).sum(dim=1)
+        return directional_derivative.pow(2).mean()
+
+    def _gradient_penalty(
+        self,
+        real_x: torch.Tensor,
+        fake_x: torch.Tensor,
+        network_context: torch.Tensor,
+    ) -> torch.Tensor:
+        alpha = torch.rand(real_x.shape[0], 1, device=self.device)
+        mixed = (alpha * real_x + (1.0 - alpha) * fake_x).requires_grad_(True)
+        score = self.critic(mixed, network_context)
+        gradient = torch.autograd.grad(
+            outputs=score,
+            inputs=mixed,
+            grad_outputs=torch.ones_like(score),
+            create_graph=True,
+            retain_graph=True,
+            only_inputs=True,
+        )[0]
+        return F.relu(gradient.norm(2, dim=1) - 1.0).pow(2).mean()
+
+    @staticmethod
+    def _gradient_norm(parameters: Any) -> float:
+        squared_norm = torch.zeros(())
+        for parameter in parameters:
+            if parameter.grad is not None:
+                squared_norm = squared_norm + parameter.grad.detach().cpu().pow(2).sum()
+        return float(torch.sqrt(squared_norm))
+
+    def _make_optimizer(self, params: Any) -> torch.optim.Optimizer:
+        kwargs = {"lr": self.lr, "betas": self.betas}
         if self.optimizer == "adam":
             return torch.optim.Adam(params, **kwargs)
         return _OptimisticAdam(params, **kwargs)
@@ -528,7 +901,9 @@ class _Denoiser(nn.Module):
     ) -> None:
         super().__init__()
         self.time_embedding = _TimeEmbedding(time_dim)
-        self.net = _MLP(data_dim + context_dim + time_dim, data_dim, hidden_dims, dropout)
+        self.net = _MLP(
+            data_dim + context_dim + time_dim, data_dim, hidden_dims, dropout
+        )
 
     def forward(
         self,
@@ -612,7 +987,8 @@ class TabularDiffusion(BaseEstimator):
 
         self.params = {
             "denoiser_state": {
-                name: value.detach().cpu() for name, value in self.denoiser.state_dict().items()
+                name: value.detach().cpu()
+                for name, value in self.denoiser.state_dict().items()
             }
         }
         return self
@@ -631,7 +1007,9 @@ class TabularDiffusion(BaseEstimator):
                 alpha = self.alphas[t].unsqueeze(1)
                 alpha_bar = self.alpha_bars[t].unsqueeze(1)
                 pred_noise = self.denoiser(x, t, c)
-                mean = (x - beta / torch.sqrt(1 - alpha_bar) * pred_noise) / torch.sqrt(alpha)
+                mean = (x - beta / torch.sqrt(1 - alpha_bar) * pred_noise) / torch.sqrt(
+                    alpha
+                )
                 if step > 0:
                     x = mean + torch.sqrt(beta) * torch.randn_like(x)
                 else:
@@ -694,7 +1072,9 @@ class SafetensorsLLMInContextGenerator(BaseEstimator):
         self.rows_per_prompt = None if rows_per_prompt is None else int(rows_per_prompt)
         self.progress_path = progress_path
 
-    def fit(self, X: Any, column_names: Optional[list[str]] = None) -> "SafetensorsLLMInContextGenerator":
+    def fit(
+        self, X: Any, column_names: Optional[list[str]] = None
+    ) -> "SafetensorsLLMInContextGenerator":
         values = np.asarray(X)
         if values.ndim != 2:
             raise ValueError("Expected a two-dimensional tabular array.")
@@ -736,10 +1116,15 @@ class SafetensorsLLMInContextGenerator(BaseEstimator):
                 ),
                 **({"temperature": self.temperature} if self.do_sample else {}),
             )
-            text = tokenizer.decode(output[0][inputs["input_ids"].shape[1] :], skip_special_tokens=True)
+            text = tokenizer.decode(
+                output[0][inputs["input_ids"].shape[1] :], skip_special_tokens=True
+            )
             rows.extend(self._parse_rows(text))
             self._write_progress(rows[:n], n)
-            print(f"Parsed {min(len(rows), n)} / {n} rows after {attempts} attempts", flush=True)
+            print(
+                f"Parsed {min(len(rows), n)} / {n} rows after {attempts} attempts",
+                flush=True,
+            )
         if len(rows) < n:
             raise RuntimeError(
                 f"Parsed {len(rows)} valid rows after {attempts} LLM generation attempts; "
@@ -790,7 +1175,9 @@ class SafetensorsLLMInContextGenerator(BaseEstimator):
         from transformers import AutoModelForCausalLM, AutoModelForImageTextToText
 
         load_kwargs = {
-            "torch_dtype": torch.float16 if self.device.type == "cuda" else torch.float32,
+            "torch_dtype": (
+                torch.float16 if self.device.type == "cuda" else torch.float32
+            ),
             "device_map": "auto" if self.device.type == "cuda" else None,
         }
         if self.load_in_4bit:
@@ -839,7 +1226,11 @@ class SafetensorsQLORAGenerator(SafetensorsLLMInContextGenerator):
         try:
             import transformers
             from peft import LoraConfig, get_peft_model
-            from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
+            from transformers import (
+                AutoModelForCausalLM,
+                AutoTokenizer,
+                BitsAndBytesConfig,
+            )
         except ImportError as exc:
             raise ImportError(
                 "Install transformers, peft, accelerate, and bitsandbytes for QLoRA."
@@ -930,7 +1321,9 @@ class SafetensorsQLORAGenerator(SafetensorsLLMInContextGenerator):
         n_rows = self.training_rows.shape[0]
         n_examples = min(self.examples, n_rows)
         block = max(1, min(int(rows_per_completion), n_rows))
-        n_samples = int(train_samples) if train_samples is not None else max(128, n_rows)
+        n_samples = (
+            int(train_samples) if train_samples is not None else max(128, n_rows)
+        )
         examples: list[tuple[str, str]] = []
         for _ in range(n_samples):
             prompt_idx = rng.choice(n_rows, n_examples, replace=False)
@@ -943,7 +1336,8 @@ class SafetensorsQLORAGenerator(SafetensorsLLMInContextGenerator):
     def _adapter_prompt(self, prompt_idx: np.ndarray, rows_requested: int) -> str:
         header = ",".join(self.column_names)
         examples = "\n".join(
-            ",".join(f"{value:.6g}" for value in self.training_rows[i]) for i in prompt_idx
+            ",".join(f"{value:.6g}" for value in self.training_rows[i])
+            for i in prompt_idx
         )
         return (
             "You are generating realistic synthetic rows from an economic dataset.\n"
@@ -975,7 +1369,9 @@ class SafetensorsQLORAGenerator(SafetensorsLLMInContextGenerator):
         from transformers import AutoModelForCausalLM, AutoModelForImageTextToText
 
         load_kwargs = {
-            "torch_dtype": torch.float16 if self.device.type == "cuda" else torch.float32,
+            "torch_dtype": (
+                torch.float16 if self.device.type == "cuda" else torch.float32
+            ),
             "device_map": "auto" if self.device.type == "cuda" else None,
         }
         if self.load_in_4bit:
@@ -1026,7 +1422,10 @@ class _StopOnStrings:
             return False
         generated_ids = generated.tolist()
         for stop_ids in self.stop_token_ids:
-            if len(generated_ids) >= len(stop_ids) and generated_ids[-len(stop_ids) :] == stop_ids:
+            if (
+                len(generated_ids) >= len(stop_ids)
+                and generated_ids[-len(stop_ids) :] == stop_ids
+            ):
                 return True
         return False
 
@@ -1091,13 +1490,18 @@ def _prepare_model_for_lora_training(model: Any) -> None:
     if hasattr(model, "enable_input_require_grads"):
         model.enable_input_require_grads()
     else:
-        def make_inputs_require_grad(module: Any, input: Any, output: torch.Tensor) -> None:
+
+        def make_inputs_require_grad(
+            module: Any, input: Any, output: torch.Tensor
+        ) -> None:
             output.requires_grad_(True)
 
         model.get_input_embeddings().register_forward_hook(make_inputs_require_grad)
     if hasattr(model, "gradient_checkpointing_enable"):
         try:
-            model.gradient_checkpointing_enable(gradient_checkpointing_kwargs={"use_reentrant": False})
+            model.gradient_checkpointing_enable(
+                gradient_checkpointing_kwargs={"use_reentrant": False}
+            )
         except TypeError:
             model.gradient_checkpointing_enable()
 
@@ -1141,8 +1545,14 @@ def distribution_metrics(
         "marginal_w1_max": float(np.max(marginal_w1)),
         "marginal_ks_mean": float(np.mean(marginal_ks)),
         "marginal_ks_max": float(np.max(marginal_ks)),
-        "mean_l2": float(np.linalg.norm(real_array.mean(axis=0) - fake_array.mean(axis=0))),
-        "cov_frobenius": float(np.linalg.norm(np.cov(real_array, rowvar=False) - np.cov(fake_array, rowvar=False))),
+        "mean_l2": float(
+            np.linalg.norm(real_array.mean(axis=0) - fake_array.mean(axis=0))
+        ),
+        "cov_frobenius": float(
+            np.linalg.norm(
+                np.cov(real_array, rowvar=False) - np.cov(fake_array, rowvar=False)
+            )
+        ),
         "corr_frobenius": float(np.linalg.norm(corr_real - corr_fake)),
         "sliced_wasserstein": sliced_wasserstein_distance(
             real_array,
