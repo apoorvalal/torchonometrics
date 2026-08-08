@@ -16,16 +16,11 @@ API entry points:
 __version__ = "0.1.0"
 
 from .base import BaseEstimator
-from .linear import LinearRegression
-from .mle import LogisticRegression, PoissonRegression, MaximumLikelihoodEstimator
-from .score_matching import (
-    AntitonicScore,
-    AntitonicScoreMatchingRegression,
-    estimate_antitonic_score,
-)
 from .demean import demean_torch, prepare_fixed_effects
 from .grouped_fe import KNNGroupedFixedEffects, build_panel_embeddings
 from .latent_factor import LatentFactorGLM
+from .linear import LinearRegression
+from .mle import LogisticRegression, MaximumLikelihoodEstimator, PoissonRegression
 from .panel import (
     NuclearNormMatrixCompletion,
     SyntheticDID,
@@ -35,10 +30,16 @@ from .panel import (
     sc_estimate,
     synthdid_estimate,
 )
+from .score_matching import (
+    AntitonicScore,
+    AntitonicScoreMatchingRegression,
+    estimate_antitonic_score,
+)
 from .simdgp import (
     SafetensorsLLMInContextGenerator,
     SafetensorsQLORAGenerator,
     TabularDiffusion,
+    TabularPTGAN,
     TabularTransformer,
     TabularWGAN,
     distribution_metrics,
@@ -46,7 +47,7 @@ from .simdgp import (
 )
 
 __all__ = [
-    "BaseEstimator", 
+    "BaseEstimator",
     "LinearRegression",
     "MaximumLikelihoodEstimator",
     "LogisticRegression",
@@ -68,6 +69,7 @@ __all__ = [
     "prepare_fixed_effects",
     "TabularTransformer",
     "TabularWGAN",
+    "TabularPTGAN",
     "TabularDiffusion",
     "SafetensorsLLMInContextGenerator",
     "SafetensorsQLORAGenerator",
