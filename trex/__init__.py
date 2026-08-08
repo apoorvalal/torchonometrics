@@ -16,6 +16,7 @@ API entry points:
 __version__ = "0.1.0"
 
 from .base import BaseEstimator
+from .cmr import MaximumMomentRestriction, SieveMinimumDistance
 from .demean import demean_torch, prepare_fixed_effects
 from .grouped_fe import KNNGroupedFixedEffects, build_panel_embeddings
 from .latent_factor import LatentFactorGLM
@@ -58,6 +59,8 @@ __all__ = [
     "KNNGroupedFixedEffects",
     "build_panel_embeddings",
     "LatentFactorGLM",
+    "MaximumMomentRestriction",
+    "SieveMinimumDistance",
     "NuclearNormMatrixCompletion",
     "SyntheticDID",
     "did_estimate",
