@@ -15,6 +15,14 @@ High-performance econometric estimation using PyTorch with first-class GPU suppo
 - **Maximum Likelihood**: Logistic and Poisson regression with PyTorch optimizers
 - **Discrete Choice Models**: Multinomial logit, probit, and low-rank logit for large choice sets
 
+### Simulation DGPs
+- **Tabular preprocessing**: Standardize continuous columns while preserving binary and nonnegative support constraints
+- **Wasserstein GANs**: Conditional tabular WGAN-GP with Adam or optimistic Adam
+- **Parallel-tempered GANs**: Convexly tempered targets and the Sohn--Song coherency penalty for multimodal data
+- **Diffusion models**: Conditional denoising diffusion for tabular simulation
+- **Optional local LLM generators**: Safetensors in-context generation and QLoRA adapters without adding model-loading dependencies to the core import path
+- **Distribution diagnostics**: Marginal Wasserstein/KS distances, moment and dependence discrepancies, and sliced Wasserstein distance
+
 ### Technical Capabilities
 - **Automatic GPU Detection**: Seamless CPU/GPU operation with device management
 - **Heteroskedasticity-Robust Inference**: HC0-HC3 standard errors for cross-sectional data
@@ -112,6 +120,51 @@ cmr = MaximumMomentRestriction(
 cmr.fit(treatment, outcome, instruments)
 print(cmr.params["mmr_loss"])
 ```
+
+### Synthetic Tabular DGPs
+
+Fit a simulator to an empirical sample and draw synthetic rows with the same
+column dimension. `TabularPTGAN` trains jointly over convexly tempered target
+laws; sampling at `alpha=1` returns draws from the original data law.
+
+```python
+import torch
+from trex import TabularPTGAN, distribution_metrics
+
+# An eight-component Gaussian ring: a deliberately multimodal target.
+n = 4_000
+angles = 2 * torch.pi * torch.arange(8) / 8
+centers = 1.5 * torch.column_stack((torch.cos(angles), torch.sin(angles)))
+labels = torch.randint(0, 8, (n,))
+observed = centers[labels] + 0.1 * torch.randn(n, 2)
+
+simulator = TabularPTGAN(
+    hidden_dims=(64, 64),
+    critic_hidden_dims=(64, 64),
+    batch_size=100,
+    max_steps=1_500,
+    temperature_ratio=0.9,
+    coherency_weight=100.0,
+    seed=0,
+)
+simulator.fit(observed)
+synthetic = simulator.sample(n, alpha=1.0)
+
+fit = distribution_metrics(observed, synthetic)
+print(f"Sliced Wasserstein: {fit['sliced_wasserstein']:.3f}")
+```
+
+`TabularWGAN` and `TabularDiffusion` expose the same `fit`/`sample` pattern.
+Conditional generation is available through the `context` argument. For mixed
+continuous/binary tables, use `TabularTransformer` before fitting and its
+`inverse_transform` method after sampling.
+
+The equal-budget benchmark in
+[`benchmarks/ptgan_convergence_VERDICT.md`](benchmarks/ptgan_convergence_VERDICT.md)
+compares PTGAN with WGAN-GP and a tempering-without-coherency ablation. On its
+eight-mode Gaussian target, PTGAN recovered all modes in 10/10 runs; the
+ablation shows that the coherency penalty, rather than convex interpolation by
+itself, drives the stabilization.
 
 ### Maximum Likelihood Estimation
 
@@ -335,6 +388,7 @@ Contributions welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
 - Newey, W. K., & West, K. D. (1987). A simple, positive semi-definite, heteroskedasticity and autocorrelation consistent covariance matrix. *Econometrica*, 55(3), 703-708.
 - Gaure, S. (2013). OLS with multiple high dimensional category variables. *Computational Statistics & Data Analysis*, 66, 8-18.
 - Kallus, N., & Udell, M. (2016). Dynamic assortment personalization in high dimensions. *arXiv preprint arXiv:1610.05604*.
+- Sohn, J., & Song, Q. (2024). Parallelly tempered generative adversarial nets: Toward stabilized gradients. *arXiv preprint arXiv:2411.11786*.
 
 ## Related Projects
 

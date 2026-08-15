@@ -16,12 +16,12 @@ API entry points:
 __version__ = "0.1.0"
 
 from .base import BaseEstimator
-from .linear import LinearRegression
-from .mle import LogisticRegression, PoissonRegression, MaximumLikelihoodEstimator
+from .cmr import MaximumMomentRestriction, SieveMinimumDistance
 from .demean import demean_torch, prepare_fixed_effects
 from .grouped_fe import KNNGroupedFixedEffects, build_panel_embeddings
 from .latent_factor import LatentFactorGLM
-from .cmr import MaximumMomentRestriction, SieveMinimumDistance
+from .linear import LinearRegression
+from .mle import LogisticRegression, MaximumLikelihoodEstimator, PoissonRegression
 from .panel import (
     NuclearNormMatrixCompletion,
     SyntheticDID,
@@ -31,6 +31,21 @@ from .panel import (
     sc_estimate,
     synthdid_estimate,
 )
+from .score_matching import (
+    AntitonicScore,
+    AntitonicScoreMatchingRegression,
+    estimate_antitonic_score,
+)
+from .simdgp import (
+    SafetensorsLLMInContextGenerator,
+    SafetensorsQLORAGenerator,
+    TabularDiffusion,
+    TabularPTGAN,
+    TabularTransformer,
+    TabularWGAN,
+    distribution_metrics,
+    sliced_wasserstein_distance,
+)
 
 __all__ = [
     "BaseEstimator",
@@ -38,6 +53,9 @@ __all__ = [
     "MaximumLikelihoodEstimator",
     "LogisticRegression",
     "PoissonRegression",
+    "AntitonicScore",
+    "AntitonicScoreMatchingRegression",
+    "estimate_antitonic_score",
     "KNNGroupedFixedEffects",
     "build_panel_embeddings",
     "LatentFactorGLM",
@@ -52,4 +70,12 @@ __all__ = [
     "synthdid_estimate",
     "demean_torch",
     "prepare_fixed_effects",
+    "TabularTransformer",
+    "TabularWGAN",
+    "TabularPTGAN",
+    "TabularDiffusion",
+    "SafetensorsLLMInContextGenerator",
+    "SafetensorsQLORAGenerator",
+    "distribution_metrics",
+    "sliced_wasserstein_distance",
 ]
